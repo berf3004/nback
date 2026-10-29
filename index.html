@@ -1,0 +1,1532 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>Tâche n-back</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="n-back">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* Layout: same shell as the Flanker task (Séance / Réglages / Données) with a
+   separate full-screen stage for the child. The stage never follows the device
+   theme, so stimuli look identical on every tablet. System fonts only, so the
+   app renders the same offline. */
+:root{
+  --bg:#f1f3f7; --surface:#ffffff; --sunken:#e3e7ef; --ink:#151a26; --muted:#5a6275; --line:#cfd5e1;
+  --accent:#2d4f9e; --accent-ink:#ffffff; --accent-soft:#dde5f5;
+  --good:#1b7443; --good-soft:#dcefe3; --warn:#8a5200; --warn-soft:#f5e7cc; --bad:#b3261e; --bad-soft:#f7e1df;
+  --stage-bg:#ffffff; --stage-ink:#000000; --stage-soft:#f0f0f0; --stage-press:#d2d2d2; --stage-edge:#8c8c8c; --stage-dim:#6e6e6e;
+  --stage-good:#17703f; --stage-bad:#b3261e; --stage-warn:#8a5200;
+  --font-display: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-data: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f121a; --surface:#181d29; --sunken:#0a0d13; --ink:#e6e9f0; --muted:#97a0b3; --line:#2c3344;
+    --accent:#8fa9ec; --accent-ink:#0b1630; --accent-soft:#1d2a4a;
+    --good:#6fd39a; --good-soft:#153324; --warn:#f0b65a; --warn-soft:#3a2c10; --bad:#ff8f86; --bad-soft:#3d1a18;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f121a; --surface:#181d29; --sunken:#0a0d13; --ink:#e6e9f0; --muted:#97a0b3; --line:#2c3344;
+  --accent:#8fa9ec; --accent-ink:#0b1630; --accent-soft:#1d2a4a;
+  --good:#6fd39a; --good-soft:#153324; --warn:#f0b65a; --warn-soft:#3a2c10; --bad:#ff8f86; --bad-soft:#3d1a18;
+  color-scheme: dark;
+}
+#stage[data-theme="dark"], .screen[data-theme="dark"]{
+  --stage-bg:#000000; --stage-ink:#ffffff; --stage-soft:#1c1c1c; --stage-press:#3a3a3a; --stage-edge:#7a7a7a; --stage-dim:#9a9a9a;
+  --stage-good:#6fd39a; --stage-bad:#ff8f86; --stage-warn:#f0b65a;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 var(--font-body);-webkit-text-size-adjust:100%}
+#app{max-width:1040px;margin:0 auto;padding-left:max(20px, env(safe-area-inset-left, 0px));padding-right:max(20px, env(safe-area-inset-right, 0px));padding-block:20px 48px;display:flex;flex-direction:column;gap:24px}
+h1,h2,h3{font-family:var(--font-display);text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:22px;font-weight:700;letter-spacing:-.01em}
+h2{font-size:20px;font-weight:700}
+h3{font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+p{margin:0}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+
+/* header */
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px 24px}
+.brand{display:flex;align-items:center;gap:12px;min-width:0}
+.mark{display:flex;gap:3px}
+.mark span{width:22px;height:26px;display:grid;place-items:center;border:1.5px solid var(--line);border-radius:6px;font:700 14px var(--font-body);color:var(--muted);background:var(--surface)}
+.mark span.hit{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.ver{font:13px var(--font-data);color:var(--muted)}
+.tabs{display:flex;gap:4px;padding:4px;background:var(--sunken);border-radius:12px}
+.tabs button{appearance:none;border:0;background:transparent;color:var(--muted);font:600 15px var(--font-body);padding:9px 16px;border-radius:9px;min-height:40px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+
+/* shared pieces */
+.view{display:flex;flex-direction:column;gap:24px}
+.lede{color:var(--muted);max-width:65ch}
+.cols{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:28px;align-items:start}
+.stack{display:flex;flex-direction:column;gap:16px;min-width:0}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field label,.check label{font-size:14px;font-weight:600}
+.field .hint,.check .hint{font-size:13px;color:var(--muted);line-height:1.4}
+.field .err{font-size:13px;color:var(--bad);font-weight:600}
+input[type="text"],input[type="number"],select,textarea{
+  width:100%;min-height:44px;padding:9px 12px;font:16px var(--font-body);color:var(--ink);
+  background:var(--surface);border:1px solid var(--line);border-radius:9px}
+input[type="number"],input.mono{font-family:var(--font-data);font-variant-numeric:tabular-nums}
+textarea{min-height:76px;resize:vertical;line-height:1.4}
+input:focus,select:focus,textarea:focus{outline:3px solid var(--accent);outline-offset:1px}
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.check{display:grid;grid-template-columns:24px minmax(0,1fr);gap:4px 10px;align-items:start}
+.check input{width:22px;height:22px;margin:1px 0 0;accent-color:var(--accent)}
+.check .hint{grid-column:2}
+
+.btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 16px;
+  border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font:600 15px var(--font-body);cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.big{min-height:56px;font-size:18px;padding:14px 24px;width:100%}
+.btn.small{min-height:36px;padding:6px 11px;font-size:14px}
+.btn.danger{color:var(--bad)}
+.btn.armed{background:var(--bad);border-color:var(--bad);color:var(--surface)}
+.btn:disabled{opacity:.5;cursor:default}
+.row-btns{display:flex;flex-wrap:wrap;gap:10px}
+
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:13px;font-weight:600;white-space:nowrap;background:var(--sunken);color:var(--muted)}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.good{background:var(--good-soft);color:var(--good)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.states{display:flex;flex-wrap:wrap;gap:8px}
+.note{font-size:14px;color:var(--muted);max-width:65ch}
+.banner{padding:12px 14px;border-radius:10px;background:var(--accent-soft);color:var(--ink);font-size:15px}
+.banner.warn{background:var(--warn-soft)}
+.banner.bad{background:var(--bad-soft)}
+
+/* protocol panel */
+.proto{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.proto ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.proto li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;font-size:15px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.proto li span:last-child{font-family:var(--font-data);font-variant-numeric:tabular-nums;text-align:right}
+.screen{background:var(--stage-bg);color:var(--stage-ink);border:1px solid var(--line);border-radius:10px;padding:16px 10px 12px;display:flex;flex-direction:column;align-items:center;gap:10px;overflow-x:auto}
+.screen .cap{font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--stage-dim)}
+
+/* example strip (protocol panel and instructions) */
+.strip{display:flex;gap:8px;align-items:flex-start}
+.tile{display:flex;flex-direction:column;align-items:center;gap:6px}
+.tile .item{width:var(--tile,48px);height:var(--tile,48px);display:grid;place-items:center;border:1.5px solid var(--stage-edge);border-radius:10px;
+  font:700 calc(var(--tile,48px)*.56)/1 var(--font-body);color:var(--stage-ink);background:var(--stage-bg)}
+.tile .ans{font:700 12px var(--font-body);letter-spacing:.06em;color:var(--stage-dim)}
+.tile.yes .item{border-color:var(--stage-good);box-shadow:0 0 0 2px var(--stage-good)}
+.tile.yes .ans{color:var(--stage-good)}
+.mini9{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;width:72%;height:72%}
+.mini9 i{border:1px solid var(--stage-edge);border-radius:2px}
+.mini9 i.c{border-color:transparent}
+.mini9 i.on{background:var(--stage-ink);border-color:var(--stage-ink)}
+
+/* settings */
+.group{border-top:1px solid var(--line);padding-top:18px;min-width:0;display:flex;flex-direction:column;gap:16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px 20px}
+
+/* data */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:10px 8px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700}
+tbody tr:last-child td{border-bottom:0}
+th:first-child,td:first-child{padding-left:14px}
+th:last-child,td:last-child{padding-right:12px}
+td.num,th.num{text-align:right;font-family:var(--font-data);font-variant-numeric:tabular-nums}
+td.id{font-family:var(--font-data);font-weight:600}
+td.id .sub{display:block;font:400 13px var(--font-body);color:var(--muted)}
+td .chips{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+td .row-btns{flex-wrap:nowrap;gap:6px;justify-content:flex-end}
+.lv{display:flex;flex-direction:column;gap:2px;font:13px var(--font-data);font-variant-numeric:tabular-nums}
+.lv b{font-weight:700;color:var(--ink)}
+.lv span{color:var(--muted)}
+.empty{padding:28px 20px;text-align:center;color:var(--muted)}
+details{border-top:1px solid var(--line);padding-top:14px}
+summary{font-weight:600;cursor:pointer;min-height:32px}
+.dict{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:6px 16px;font-size:14px;margin:12px 0 0}
+.dict dt{font-family:var(--font-data);font-weight:600;overflow-wrap:anywhere}
+.dict dd{margin:0;color:var(--muted)}
+.dict h4{grid-column:1/-1;margin:12px 0 0;font:700 13px var(--font-display);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.refs{margin:12px 0 0;padding-left:20px;font-size:14px;color:var(--muted);display:flex;flex-direction:column;gap:6px;max-width:80ch}
+#manual textarea{font:12px/1.4 var(--font-data);min-height:180px;white-space:pre}
+
+/* participant stage */
+#stage{position:fixed;inset:0;z-index:50;background:var(--stage-bg);color:var(--stage-ink);overflow:hidden;
+  touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;
+  font-family:var(--font-body);--u:calc(min(6.5vw,9vh)*var(--stim-scale,1))}
+.stage-center{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.stage-center>*{grid-area:1/1;visibility:hidden}
+#fix svg{width:calc(var(--u)*.46);height:calc(var(--u)*.46);display:block;fill:currentColor}
+#stim{font:700 calc(var(--u)*2.4)/1 var(--font-body);letter-spacing:0}
+#grid9{display:grid;grid-template-columns:repeat(3,calc(var(--u)*1.7));grid-auto-rows:calc(var(--u)*1.7);gap:calc(var(--u)*.3)}
+#grid9 i{border:2px solid var(--stage-edge);border-radius:14%}
+#grid9 i.c{border-color:transparent}
+#grid9 i.on{background:var(--stage-ink);border-color:var(--stage-ink)}
+#fb{font:700 clamp(28px,6vmin,56px) var(--font-display);background:var(--stage-bg);padding:12px 24px;border-radius:16px}
+#fb[data-kind="good"]{color:var(--stage-good)}
+#fb[data-kind="bad"]{color:var(--stage-bad)}
+#fb[data-kind="slow"]{color:var(--stage-warn)}
+.resp{position:absolute;bottom:calc(4vh + env(safe-area-inset-bottom,0px));width:min(22vw,30vh);aspect-ratio:1;max-width:100%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4%;border:2px solid var(--stage-edge);border-radius:26%;background:var(--stage-soft);color:var(--stage-ink);
+  padding:0;margin:0;appearance:none;touch-action:none;font:700 min(4.4vw,6vh) var(--font-display)}
+.resp svg{width:42%;height:42%;fill:none;stroke:currentColor;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.resp span{pointer-events:none}
+.resp-l{left:calc(4vw + env(safe-area-inset-left,0px))}
+.resp-r{right:calc(4vw + env(safe-area-inset-right,0px))}
+.resp.down{background:var(--stage-press)}
+#quit{position:absolute;top:calc(10px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px));
+  appearance:none;border:1px solid var(--stage-edge);border-radius:999px;background:var(--stage-bg);color:var(--stage-dim);
+  font:600 13px var(--font-body);padding:8px 14px;min-height:36px;overflow:hidden;touch-action:none;z-index:3}
+#quit::before{content:"";position:absolute;inset:0;background:var(--stage-press);transform:scaleX(0);transform-origin:left}
+#quit.holding::before{transform:scaleX(1);transition:transform 1.5s linear}
+#quit span{position:relative}
+#stage.is-msg .stage-center,#stage.is-msg .resp{display:none}
+#stageMsg{position:absolute;inset:0;display:grid;place-items:center;padding:56px 24px 24px;overflow:auto;touch-action:pan-y}
+.msg-card{width:100%;max-width:720px;display:flex;flex-direction:column;gap:22px;font-size:clamp(18px,2.5vmin,24px);line-height:1.45}
+.msg-card h2{font-size:clamp(26px,4.4vmin,40px)}
+.msg-card .strip{--tile:clamp(40px,7vmin,64px);flex-wrap:wrap;margin-block:6px}
+.msg-card .tile .ans{font-size:clamp(13px,1.8vmin,16px)}
+.msg-card .small{font-size:clamp(15px,2vmin,18px);color:var(--stage-dim)}
+.msg-btns{display:flex;flex-wrap:wrap;gap:14px}
+.sbtn{appearance:none;min-height:64px;padding:14px 28px;border-radius:14px;border:2px solid var(--stage-edge);background:var(--stage-bg);color:var(--stage-ink);
+  font:700 clamp(18px,2.5vmin,24px) var(--font-display);cursor:pointer}
+.sbtn.primary{background:var(--stage-ink);color:var(--stage-bg);border-color:var(--stage-ink)}
+.sbtn:disabled{opacity:.45}
+
+@media (max-width:760px){
+  .cols{grid-template-columns:minmax(0,1fr)}
+  .pair{grid-template-columns:minmax(0,1fr)}
+  .tabs{width:100%}
+  .tabs button{flex:1;padding-inline:8px}
+}
+@media (prefers-reduced-motion:reduce){ #quit.holding::before{transition-duration:1.5s} }
+</style>
+
+<div id="app">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><span>K</span><span>R</span><span class="hit">K</span></span>
+      <h1>Tâche n-back</h1>
+      <span class="ver" id="ver"></span>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button type="button" role="tab" id="tab-seance" data-tab="seance" aria-selected="true">Séance</button>
+      <button type="button" role="tab" id="tab-reglages" data-tab="reglages" aria-selected="false">Réglages</button>
+      <button type="button" role="tab" id="tab-donnees" data-tab="donnees" aria-selected="false">Données</button>
+    </nav>
+  </header>
+
+  <div class="banner bad" id="storeWarn" role="alert" hidden>Le stockage local de cet appareil est indisponible. Les séances ne sont gardées qu’en mémoire : exportez-les avant de fermer l’application.</div>
+
+  <section class="view" id="view-seance" role="tabpanel" aria-labelledby="tab-seance">
+    <div class="cols">
+      <form class="stack" id="startForm" novalidate>
+        <h2>Nouvelle séance</h2>
+        <div class="field">
+          <label for="f-pid">Code du participant</label>
+          <input type="text" id="f-pid" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" placeholder="P001">
+          <span class="err" id="pidErr" hidden>Entrez un code de participant pour démarrer.</span>
+          <span class="hint" id="pidDup" hidden></span>
+        </div>
+        <div class="pair">
+          <div class="field">
+            <label for="f-session">Temps de mesure</label>
+            <input type="text" id="f-session" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="T1">
+          </div>
+          <div class="field">
+            <label for="f-group">Groupe ou condition</label>
+            <input type="text" id="f-group" autocomplete="off" autocorrect="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="pair">
+          <div class="field">
+            <label for="f-age">Âge (années)</label>
+            <input type="number" id="f-age" inputmode="decimal" min="4" max="99" step="0.1" placeholder="10">
+            <span class="hint">Facultatif. Utile pour comparer aux normes par âge.</span>
+          </div>
+          <div class="field">
+            <label for="f-exp">Expérimentateur</label>
+            <input type="text" id="f-exp" autocomplete="off" autocorrect="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-notes">Notes sur la séance</label>
+          <textarea id="f-notes" placeholder="Lieu, conditions, incidents"></textarea>
+        </div>
+        <button type="submit" class="btn primary big" id="startBtn">Démarrer la séance</button>
+        <div class="states" id="states"></div>
+      </form>
+
+      <aside class="proto" aria-labelledby="protoH">
+        <h3 id="protoH">Protocole de cette séance</h3>
+        <div class="screen" id="protoScreen"></div>
+        <ul id="protoList"></ul>
+        <p class="note" id="protoNote"></p>
+      </aside>
+    </div>
+  </section>
+
+  <section class="view" id="view-reglages" role="tabpanel" aria-labelledby="tab-reglages" hidden>
+    <div class="stack">
+      <h2>Réglages du protocole</h2>
+      <p class="lede">Les valeurs par défaut reprennent la procédure de Pelegrina et coll. (2015), normée auprès de 3 722 enfants de 7 à 13 ans. Les changements sont enregistrés sur cet appareil, s’appliquent à la prochaine séance et sont consignés avec chaque séance.</p>
+    </div>
+    <form id="settingsForm" class="stack" novalidate></form>
+    <div class="row-btns">
+      <button type="button" class="btn" id="resetBtn">Rétablir les valeurs par défaut</button>
+    </div>
+  </section>
+
+  <section class="view" id="view-donnees" role="tabpanel" aria-labelledby="tab-donnees" hidden>
+    <div class="stack">
+      <h2>Données enregistrées</h2>
+      <p class="lede">Chaque essai est écrit sur cet appareil dès qu’il se termine. Exportez les fichiers au retour du terrain, puis vérifiez-les avant de supprimer quoi que ce soit ici.</p>
+      <div class="banner" id="dataMsg" role="status" hidden></div>
+    </div>
+    <div class="stack">
+      <h3>Exporter toutes les séances</h3>
+      <div class="row-btns">
+        <button type="button" class="btn primary" id="expTrials">Essais (CSV)</button>
+        <button type="button" class="btn" id="expEvents">Événements (CSV)</button>
+        <button type="button" class="btn" id="expSessions">Séances et scores (CSV)</button>
+        <button type="button" class="btn" id="expJson">Sauvegarde complète (JSON)</button>
+      </div>
+      <p class="note">Essais : une ligne par essai, pratique et essais de départ compris. Événements : chaque toucher et chaque changement d’écran avec son horodatage. Séances : une ligne par séance avec les réglages, l’appareil et les scores de la littérature calculés pour chaque niveau.</p>
+    </div>
+    <div class="stack" id="manual" hidden>
+      <h3>Copie manuelle</h3>
+      <p class="note" id="manualNote"></p>
+      <textarea id="manualText" readonly spellcheck="false"></textarea>
+      <div class="row-btns">
+        <button type="button" class="btn" id="manualCopy">Copier le contenu</button>
+        <button type="button" class="btn" id="manualClose">Fermer</button>
+      </div>
+    </div>
+    <div class="stack">
+      <h3 id="sessH">Séances</h3>
+      <div class="tablewrap" id="sessWrap"></div>
+      <p class="note">Par niveau : d′ (correction log-linéaire), proportion de cibles détectées (H) et de fausses alarmes (FA). Blocs de test seulement, sans les essais de départ, sans aucune exclusion. Ces chiffres servent à vérifier la séance sur place ; refaites les calculs à partir du fichier des essais pour l’analyse.</p>
+      <div class="row-btns">
+        <button type="button" class="btn danger" id="clearAll">Supprimer toutes les séances</button>
+      </div>
+    </div>
+    <details>
+      <summary>Dictionnaire des variables</summary>
+      <dl class="dict" id="dictList"></dl>
+    </details>
+    <details>
+      <summary>Références</summary>
+      <ul class="refs">
+        <li>Pelegrina, S., Lechuga, M. T., García-Madruga, J. A., Elosúa, M. R., Macizo, P., Carreiras, M., Fuentes, L. J. et Bajo, M. T. (2015). Normative data on the n-back task for children and young adolescents. <i>Frontiers in Psychology</i>, 6, 1544. https://doi.org/10.3389/fpsyg.2015.01544</li>
+        <li>López-Vicente, M., Forns, J., Suades-González, E., Esnaola, M., García-Esteban, R., Álvarez-Pedrerol, M. et coll. (2016). Developmental trajectories in primary schoolchildren using n-back task. <i>Frontiers in Psychology</i>, 7, 716. https://doi.org/10.3389/fpsyg.2016.00716</li>
+        <li>Meule, A. (2017). Reporting and interpreting working memory performance in n-back tasks. <i>Frontiers in Psychology</i>, 8, 352. https://doi.org/10.3389/fpsyg.2017.00352</li>
+        <li>Kane, M. J., Conway, A. R. A., Miura, T. K. et Colflesh, G. J. H. (2007). Working memory, attention control, and the n-back task. <i>Journal of Experimental Psychology: Learning, Memory, and Cognition</i>, 33(3), 615–622.</li>
+        <li>Stanislaw, H. et Todorov, N. (1999). Calculation of signal detection theory measures. <i>Behavior Research Methods, Instruments, &amp; Computers</i>, 31(1), 137–149.</li>
+        <li>Hautus, M. J. (1995). Corrections for extreme proportions and their biasing effects on estimated values of d′. <i>Behavior Research Methods, Instruments, &amp; Computers</i>, 27(1), 46–51.</li>
+        <li>Snodgrass, J. G. et Corwin, J. (1988). Pragmatics of measuring recognition memory. <i>Journal of Experimental Psychology: General</i>, 117(1), 34–50.</li>
+      </ul>
+    </details>
+  </section>
+</div>
+
+<div id="stage" hidden>
+  <div class="stage-center">
+    <div id="fix"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M17 4h6v13h13v6H23v13h-6V23H4v-6h13z"/></svg></div>
+    <div id="grid9"></div>
+    <div id="stim"></div>
+    <div id="fb"></div>
+  </div>
+  <button type="button" class="resp resp-l" id="btnL" data-side="left"></button>
+  <button type="button" class="resp resp-r" id="btnR" data-side="right"></button>
+  <button type="button" id="quit"><span>Arrêter (maintenir)</span></button>
+  <div id="stageMsg" hidden>
+    <div class="msg-card">
+      <h2 id="msgTitle"></h2>
+      <div id="msgBody"></div>
+      <div class="msg-btns" id="msgBtns"></div>
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="dict">
+{
+"trials":[
+["participant_id","Code du participant saisi au début de la séance."],
+["session_label","Temps de mesure saisi (T1, T2, etc.)."],
+["group_label","Groupe ou condition saisi."],
+["age_years","Âge saisi au début de la séance (facultatif)."],
+["experimenter","Expérimentateur saisi."],
+["session_id","Identifiant unique de la séance, généré par l'application."],
+["session_start","Date et heure locales du début de la séance (ISO 8601 avec décalage horaire)."],
+["session_status","complete = séance menée à terme ; discontinued = arrêtée par la règle d'arrêt ; aborted = arrêtée par l'expérimentateur ; in_progress = fermée sans avoir été terminée ; error = erreur technique."],
+["app_version","Version de l'application."],
+["seed","Graine du générateur aléatoire ; avec les réglages, elle détermine toutes les séquences de la séance."],
+["stimulus_set","letters = consonnes au centre de l'écran ; spatial = carré dans une grille 3 × 3 (8 positions, centre exclu)."],
+["response_mode","two = deux boutons OUI et NON, une réponse à chaque essai ; target = un seul bouton OUI, aucune réponse attendue aux non-cibles."],
+["yes_side","Côté du bouton OUI : left ou right."],
+["phase","practice = pratique ; test = bloc de test."],
+["n_level","Charge en mémoire de travail : 0, 1, 2 ou 3 (0-back, 1-back, 2-back, 3-back)."],
+["level_rank","Rang du niveau dans la séance (1 = premier niveau passé)."],
+["block_num","Numéro du bloc dans le niveau. En pratique, numéro du passage (2 si la pratique a été refaite)."],
+["trial_in_block","Rang de l'essai dans le bloc, essais de départ compris."],
+["trial_index","Rang de l'essai dans la séance, pratique comprise."],
+["start_trial","1 = un des n premiers essais du bloc, qui n'a pas encore de stimulus n positions en arrière (jamais une cible, exclu des scores) ; 0 = essai coté."],
+["item","Stimulus affiché : une lettre, ou un numéro de position de 1 à 9 lu de gauche à droite et de haut en bas (5 = centre, jamais utilisé)."],
+["item_n_back","Stimulus présenté n essais plus tôt dans le bloc. Au 0-back : la cible fixe. Vide pour les essais de départ."],
+["target_item","Au 0-back seulement : la lettre ou la position cible."],
+["is_target","1 = cible (même stimulus que n essais plus tôt ; au 0-back, la cible fixe) ; 0 = non-cible. Établi à partir de la séquence réellement présentée."],
+["lure_type","Pour une non-cible : n-1 = même stimulus que n-1 essais plus tôt ; n+1 = même stimulus que n+1 essais plus tôt ; none = aucun leurre. Les leurres mesurent la sensibilité à la familiarité (Kane et coll., 2007)."],
+["trial_type","start, target, nontarget ou lure."],
+["correct_resp","Réponse attendue : yes (cible) ou no (non-cible). En mode target, no signifie ne pas appuyer."],
+["response","Réponse donnée : yes, no, ou none si aucune réponse dans la fenêtre. Seule la première réponse compte."],
+["response_source","touch = bouton à l'écran ; key = clavier ; none = aucune réponse."],
+["button_side","Côté du bouton touché pour la réponse retenue : left ou right."],
+["correct","1 = réponse correcte ; 0 = erreur ou absence de réponse (en mode two). En mode target, ne pas appuyer à une non-cible est correct."],
+["sdt_outcome","hit (cible, OUI), miss (cible, NON ; en mode target, cible sans réponse), false_alarm (non-cible, OUI), correct_rejection (non-cible, NON ; en mode target, non-cible sans réponse), no_response (mode two, aucune réponse)."],
+["rt_ms","Temps de réaction en millisecondes : horodatage de la réponse moins horodatage de l'apparition du stimulus. Vide si aucune réponse."],
+["rt_clock","Horloge utilisée pour la réponse : event = horodatage de l'événement tactile (plus précis) ; handler = moment où l'application a traité l'événement."],
+["n_responses","Nombre de touchers sur un bouton de réponse pendant la fenêtre (le premier est retenu, les autres sont ignorés)."],
+["stim_planned_ms","Durée prévue d'affichage du stimulus."],
+["stim_actual_ms","Durée mesurée d'affichage du stimulus."],
+["isi_planned_ms","Durée prévue de l'écran vide après le stimulus."],
+["soa_planned_ms","Intervalle prévu entre deux apparitions de stimulus (affichage + écran vide). La fenêtre de réponse couvre tout cet intervalle."],
+["soa_actual_ms","Intervalle mesuré entre l'apparition de ce stimulus et celle du suivant dans le bloc ; inclut la rétroaction si elle est affichée. Vide pour le dernier essai du bloc."],
+["resp_window_actual_ms","Durée mesurée pendant laquelle une réponse était acceptée."],
+["feedback_shown","1 = une rétroaction a été affichée après l'essai ; 0 sinon."],
+["t_stim_on_ms","Apparition du stimulus, en ms depuis l'ouverture de l'application."],
+["t_stim_off_ms","Disparition du stimulus, en ms depuis l'ouverture de l'application."],
+["t_window_end_ms","Fin de la fenêtre de réponse, en ms depuis l'ouverture de l'application."],
+["t_resp_ms","Horodatage de la réponse (horloge indiquée dans rt_clock), en ms depuis l'ouverture de l'application."],
+["t_resp_handler_ms","Moment où l'application a traité la réponse, en ms depuis l'ouverture de l'application."],
+["stim_on_unix_ms","Apparition du stimulus en temps universel (ms depuis le 1er janvier 1970), pour synchroniser avec d'autres appareils."],
+["touch_x","Position horizontale du toucher de réponse, en pixels CSS depuis le bord gauche."],
+["touch_y","Position verticale du toucher de réponse, en pixels CSS depuis le haut."],
+["n_inputs","Nombre total de touchers ou de touches enregistrés pendant l'essai, n'importe où à l'écran."],
+["page_hidden","1 = l'application est passée en arrière-plan pendant l'essai (minutage non fiable) ; 0 sinon."],
+["frame_ms","Durée mesurée d'une image à l'écran (16,7 ms à 60 Hz)."],
+["viewport_w","Largeur de la zone d'affichage en pixels CSS."],
+["viewport_h","Hauteur de la zone d'affichage en pixels CSS."],
+["dpr","Rapport entre pixels physiques et pixels CSS."],
+["stim_size_px","Lettres : taille de police en pixels CSS. Positions : côté d'une case en pixels CSS."],
+["stage_theme","light = stimuli noirs sur fond blanc ; dark = stimuli blancs sur fond noir."]
+],
+"events":[
+["participant_id","Code du participant."],
+["session_id","Identifiant de la séance."],
+["event_index","Rang de l'événement dans la séance."],
+["type","session_start, message_button, level_start, block_start, block_end, stim_on, stim_off, feedback_on, pointerdown (toucher), keydown (touche), visibility, resize, discontinue, abort, session_end."],
+["t_ms","Horodatage en ms depuis l'ouverture de l'application."],
+["unix_ms","Horodatage en temps universel (ms depuis le 1er janvier 1970)."],
+["state","État de la tâche au moment de l'événement : lead, stim, isi, feedback, message."],
+["phase","practice ou test."],
+["n_level","Niveau en cours."],
+["block_num","Numéro du bloc."],
+["trial_index","Rang de l'essai en cours dans la séance."],
+["target","Pour un toucher : left ou right (bouton), other (ailleurs à l'écran). Pour un message : bouton choisi."],
+["response","Réponse correspondant au bouton touché : yes, no, ou vide."],
+["source","touch ou key."],
+["x","Position horizontale du toucher en pixels CSS."],
+["y","Position verticale du toucher en pixels CSS."],
+["pointer_type","touch, pen ou mouse."],
+["key","Touche du clavier."],
+["t_handler_ms","Moment où l'application a traité l'événement."],
+["detail","Précision selon le type d'événement."]
+],
+"sessions_head":[
+["participant_id","Code du participant."],
+["session_label","Temps de mesure."],
+["group_label","Groupe ou condition."],
+["age_years","Âge saisi."],
+["experimenter","Expérimentateur."],
+["notes","Notes saisies avant la séance."],
+["session_id","Identifiant de la séance."],
+["session_start","Début de la séance (heure locale)."],
+["session_end","Fin de la séance (heure locale)."],
+["session_status","complete, discontinued, aborted, in_progress ou error."],
+["discontinued_level","Niveau où la règle d'arrêt s'est appliquée ; les niveaux suivants n'ont pas été passés. Vide sinon."],
+["app_version","Version de l'application."],
+["seed","Graine du générateur aléatoire."],
+["n_practice_trials","Nombre d'essais de pratique enregistrés, tous niveaux confondus."],
+["n_test_trials","Nombre d'essais de test enregistrés, essais de départ compris."],
+["n_test_expected","Nombre d'essais de test prévus par les réglages, essais de départ compris."]
+],
+"levels":[
+["practice_passes","Nombre de passages de la pratique à ce niveau."],
+["practice_hit_rate","Proportion de cibles détectées au dernier passage de la pratique."],
+["blocks","Blocs de test commencés à ce niveau."],
+["trials","Essais cotés (blocs de test, sans les essais de départ)."],
+["targets","Essais cibles cotés."],
+["nontargets","Essais non-cibles cotés."],
+["hits","Cibles avec réponse OUI."],
+["misses","Cibles sans réponse OUI (réponse NON ou aucune réponse) : erreurs d'omission."],
+["false_alarms","Non-cibles avec réponse OUI : erreurs de commission."],
+["correct_rejections","Non-cibles avec réponse NON (en mode target : sans réponse)."],
+["no_responses","Essais cotés sans aucune réponse (mode two)."],
+["accuracy","Proportion de réponses correctes, tous essais cotés (hits + rejets corrects) / essais."],
+["hit_rate","hits / targets, sans correction."],
+["fa_rate","false_alarms / nontargets, sans correction."],
+["dprime","Sensibilité d′ = z(H) − z(FA), avec correction log-linéaire (Hautus, 1995) : H = (hits + 0,5) / (targets + 1) et FA = (false_alarms + 0,5) / (nontargets + 1)."],
+["dprime_st","d′ avec la correction de Stanislaw et Todorov (1999) utilisée par Pelegrina et coll. (2015) : seules les proportions de 0 et 1 sont remplacées par 1/(2N) et 1 − 1/(2N)."],
+["criterion_c","Biais de réponse c = −[z(H) + z(FA)] / 2, correction log-linéaire. Négatif = tendance à répondre OUI ; positif = tendance à répondre NON."],
+["pr","Reconnaissance corrigée Pr = hit_rate − fa_rate (Snodgrass et Corwin, 1988)."],
+["rt_hit_mean_ms","Temps de réaction moyen des hits."],
+["rt_hit_median_ms","Temps de réaction médian des hits."],
+["rt_hit_sd_ms","Écart type des temps de réaction des hits."],
+["rt_cr_mean_ms","Temps de réaction moyen des rejets corrects (mode two seulement)."],
+["ies_ms","Score d'efficience inverse : rt_hit_mean_ms / hit_rate (Pelegrina et coll., 2015). Plus petit = meilleur."],
+["lures","Non-cibles qui étaient des leurres (n-1 ou n+1)."],
+["lure_fa_rate","Fausses alarmes aux leurres / leurres."],
+["nonlure_fa_rate","Fausses alarmes aux non-cibles sans leurre / non-cibles sans leurre."]
+],
+"sessions_tail":[
+["levels_planned","Réglage : niveaux prévus, dans l'ordre de passation."],
+["stimulus_set","Réglage : letters ou spatial."],
+["letters","Réglage : lettres utilisées pour les niveaux 1 à 3 et comme non-cibles au 0-back."],
+["target_0back","Réglage : cible du 0-back (lettre ou position)."],
+["response_mode","Réglage : two ou target."],
+["yes_side","Réglage : côté du bouton OUI."],
+["blocks_per_level","Réglage : blocs de test par niveau."],
+["trials_per_block","Réglage : essais cotés par bloc (s'y ajoutent n essais de départ)."],
+["targets_per_block","Réglage : cibles par bloc."],
+["lures_n_minus1","Réglage : leurres n-1 par bloc (niveaux 2 et 3)."],
+["lures_n_plus1","Réglage : leurres n+1 par bloc (niveaux 1 à 3)."],
+["max_consec_targets","Réglage : nombre maximal de cibles consécutives."],
+["practice_trials","Réglage : essais cotés de la pratique, par niveau."],
+["stim_ms","Réglage : affichage du stimulus."],
+["isi_ms","Réglage : écran vide après le stimulus."],
+["lead_ms","Réglage : attente avant le premier stimulus d'un bloc."],
+["feedback_ms","Réglage : durée de la rétroaction."],
+["practice_feedback","Réglage : rétroaction en pratique (1 ou 0)."],
+["test_feedback","Réglage : rétroaction en test (1 ou 0)."],
+["practice_criterion_pct","Réglage : seuil de cibles détectées en pratique sous lequel refaire la pratique est proposé."],
+["discontinue_below_pct","Réglage : seuil de cibles détectées dans un bloc de test sous lequel la séance s'arrête (0 = jamais)."],
+["fix_during_isi","Réglage : croix de fixation pendant l'écran vide (1 ou 0)."],
+["stim_scale_pct","Réglage : taille des stimuli en pourcentage."],
+["stage_theme","Réglage : light ou dark."],
+["frame_ms","Durée mesurée d'une image à l'écran."],
+["viewport_w","Largeur de la zone d'affichage en pixels CSS."],
+["viewport_h","Hauteur de la zone d'affichage en pixels CSS."],
+["screen_w","Largeur de l'écran en pixels CSS."],
+["screen_h","Hauteur de l'écran en pixels CSS."],
+["dpr","Rapport entre pixels physiques et pixels CSS."],
+["orientation","landscape ou portrait au début de la séance."],
+["standalone","1 = application lancée depuis l'écran d'accueil ; 0 = dans le navigateur."],
+["stim_size_px","Taille du stimulus en pixels CSS (voir le fichier des essais)."],
+["user_agent","Identification du navigateur et du système."],
+["exported_at","Date du dernier export des essais de cette séance."]
+]
+}
+</script>
+
+<script>
+(() => {
+'use strict';
+const APP_VERSION = '1.0.0';
+document.documentElement.lang = 'fr';
+const $ = s => document.querySelector(s);
+const IN_VIEWER = !!(window.claude && typeof window.claude.use === 'function');
+const T0 = performance.timeOrigin || (Date.now() - performance.now());
+const DICT = JSON.parse($('#dict').textContent);
+const LEVELS = [0, 1, 2, 3];
+const r1 = x => (x == null ? null : Math.round(x * 10) / 10);
+const r3 = x => (x == null || !Number.isFinite(x) ? null : Math.round(x * 1000) / 1000);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const COLS = {
+  trials: DICT.trials.map(d => d[0]),
+  events: DICT.events.map(d => d[0]),
+  sessions: DICT.sessions_head.map(d => d[0])
+    .concat(...LEVELS.map(L => DICT.levels.map(d => 'n' + L + '_' + d[0])))
+    .concat(DICT.sessions_tail.map(d => d[0]))
+};
+
+/*PURE-START*/
+const DEFAULTS = {
+  run0:false, run1:true, run2:true, run3:false,
+  stimSet:'letters', letters:'BCDFGHJKLMNPQRSTVWYZ', target0:'X', target0Pos:'1',
+  blocks:2, trials:20, targets:6, luresN1:0, luresN2:0, maxConsec:2, practiceTrials:20,
+  stimMs:500, isiMs:3000, leadMs:1500, feedbackMs:800,
+  respMode:'two', yesSide:'right',
+  practiceFeedback:true, testFeedback:false, practiceCriterion:60, discontinueBelow:0,
+  fixDuringIsi:false, stimScale:100, stageTheme:'light', csvFormat:'comma'
+};
+const LIMITS = {
+  blocks:[1,10], trials:[6,100], targets:[1,50], luresN1:[0,30], luresN2:[0,30], maxConsec:[1,10], practiceTrials:[0,60],
+  stimMs:[100,5000], isiMs:[300,10000], leadMs:[500,5000], feedbackMs:[200,3000],
+  practiceCriterion:[0,100], discontinueBelow:[0,100], stimScale:[40,250]
+};
+const POSITIONS = ['1','2','3','4','6','7','8','9'];
+const CHOICES = {
+  stimSet:['letters','spatial'], target0Pos:POSITIONS, respMode:['two','target'], yesSide:['right','left'],
+  stageTheme:['light','dark'], csvFormat:['comma','semicolon']
+};
+function cleanLetters(s){
+  return [...new Set(String(s || '').toUpperCase().replace(/[^A-Z]/g, '').split(''))].join('');
+}
+function sanitize(raw){
+  const s = Object.assign({}, DEFAULTS);
+  for (const k of Object.keys(DEFAULTS)){
+    if (!raw || raw[k] === undefined) continue;
+    const d = DEFAULTS[k];
+    if (typeof d === 'boolean') s[k] = !!raw[k];
+    else if (typeof d === 'number'){
+      let v = Math.round(Number(raw[k]));
+      if (!Number.isFinite(v)) v = d;
+      s[k] = Math.min(LIMITS[k][1], Math.max(LIMITS[k][0], v));
+    } else if (CHOICES[k]) s[k] = CHOICES[k].includes(String(raw[k])) ? String(raw[k]) : d;
+    else if (k === 'letters') s[k] = cleanLetters(raw[k]);
+    else if (k === 'target0') s[k] = cleanLetters(raw[k]).slice(0, 1) || d;
+  }
+  if (s.letters.replace(s.target0, '').length < 6) s.letters = DEFAULTS.letters;
+  if (!LEVELS.some(n => s['run' + n])){ s.run1 = true; s.run2 = true; }
+  s.targets = Math.min(s.targets, Math.floor(s.trials / 2));
+  s.luresN1 = Math.min(s.luresN1, s.trials - s.targets);
+  s.luresN2 = Math.min(s.luresN2, s.trials - s.targets - s.luresN1);
+  return s;
+}
+const levelsOf = S => LEVELS.filter(n => S['run' + n]);
+const practiceTargets = S => Math.max(1, Math.round(S.practiceTrials * S.targets / S.trials));
+
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function shuffle(a, rng){
+  for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(rng() * (i + 1)); const x = a[i]; a[i] = a[j]; a[j] = x; }
+  return a;
+}
+/* Items for level n. Letters: the consonant list (the 0-back target is never
+   one of them). Positions: the 8 outer cells of a 3 x 3 grid. */
+function poolFor(S, n){
+  const all = S.stimSet === 'spatial' ? POSITIONS.slice() : S.letters.split('');
+  const t0 = target0Of(S);
+  return n === 0 || S.stimSet !== 'spatial' ? all.filter(x => x !== t0) : all;
+}
+const target0Of = S => S.stimSet === 'spatial' ? S.target0Pos : S.target0;
+
+/* Classify every position of a presented sequence, from the sequence itself. */
+function classify(items, n, t0){
+  return items.map((v, i) => {
+    if (n > 0 && i < n) return {start: 1, is_target: 0, lure: 'none', back: ''};
+    if (n === 0) return {start: 0, is_target: v === t0 ? 1 : 0, lure: 'none', back: t0};
+    const back = items[i - n];
+    if (v === back) return {start: 0, is_target: 1, lure: 'none', back};
+    let lure = 'none';
+    if (n >= 2 && v === items[i - (n - 1)]) lure = 'n-1';
+    else if (i - n - 1 >= 0 && v === items[i - n - 1]) lure = 'n+1';
+    return {start: 0, is_target: 0, lure, back};
+  });
+}
+
+/* One block = n start trials (never targets, not scored) + nScored trials with
+   exactly nTargets targets and the requested lures. Non-targets avoid every
+   item of the last n+1 positions, so no lure appears unless asked for. The
+   sequence is checked against its own classification and redrawn otherwise. */
+function makeBlock(n, nScored, nTargets, nL1, nL2, maxConsec, S, rng){
+  const pool = poolFor(S, n), t0 = target0Of(S), L = n + nScored;
+  if (n < 2) nL1 = 0;
+  if (n < 1) nL2 = 0;
+  let last = null;
+  for (let attempt = 0; attempt < 2000; attempt++){
+    const scored = [];
+    for (let i = n; i < L; i++) scored.push(i);
+    shuffle(scored, rng);
+    const tset = new Set(scored.slice(0, nTargets));
+    let runLen = 0, okRun = true;
+    for (let i = n; i < L; i++){ runLen = tset.has(i) ? runLen + 1 : 0; if (runLen > maxConsec) okRun = false; }
+    if (!okRun && attempt < 1500) continue;
+    const rest = shuffle(scored.slice(nTargets), rng);
+    const l1 = new Set(), l2 = new Set();
+    for (const i of rest){
+      if (l1.size < nL1) l1.add(i);
+      else if (l2.size < nL2 && i - n - 1 >= 0) l2.add(i);
+    }
+    const items = [];
+    let ok = l1.size === nL1 && l2.size === nL2;
+    for (let i = 0; i < L && ok; i++){
+      let v;
+      if (tset.has(i)) v = n === 0 ? t0 : items[i - n];
+      else if (l1.has(i)) { v = items[i - (n - 1)]; if (v === items[i - n]) ok = false; }
+      else if (l2.has(i)) { v = items[i - n - 1]; if (v === items[i - n]) ok = false; }
+      else {
+        const excl = new Set();
+        if (n === 0){ excl.add(t0); if (i > 0) excl.add(items[i - 1]); }
+        else for (let k = 1; k <= n + 1; k++) if (i - k >= 0) excl.add(items[i - k]);
+        let cand = pool.filter(x => !excl.has(x));
+        if (!cand.length) cand = pool.filter(x => n === 0 ? x !== t0 : (i - n < 0 || x !== items[i - n]));
+        v = cand[Math.floor(rng() * cand.length)];
+      }
+      items.push(v);
+    }
+    if (!ok) continue;
+    const cls = classify(items, n, t0);
+    last = {items, cls};
+    let good = true;
+    for (let i = 0; i < L && good; i++){
+      const c = cls[i];
+      if (c.is_target !== (tset.has(i) ? 1 : 0)) good = false;
+      else if (!c.is_target && c.lure !== (l1.has(i) ? 'n-1' : l2.has(i) ? 'n+1' : 'none')) good = false;
+    }
+    if (good) break;
+  }
+  return last.items.map((item, i) => {
+    const c = last.cls[i];
+    return {n, item, start: c.start, is_target: c.is_target, lure: c.lure, back: c.back,
+      type: c.start ? 'start' : c.is_target ? 'target' : c.lure !== 'none' ? 'lure' : 'nontarget'};
+  });
+}
+
+/* Inverse standard normal (Acklam). */
+function qnorm(p){
+  const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+  const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+  const c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+  const d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+  const pl = 0.02425;
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  let q, r;
+  if (p < pl){ q = Math.sqrt(-2 * Math.log(p)); return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  if (p <= 1 - pl){ q = p - 0.5; r = q * q; return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1); }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+}
+const mean = a => a.length ? a.reduce((p, x) => p + x, 0) / a.length : null;
+function median(a){ if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+function sd(a){ if (a.length < 2) return null; const m = mean(a); return Math.sqrt(a.reduce((p, x) => p + (x - m) * (x - m), 0) / (a.length - 1)); }
+
+/* Literature scores for one level, from test blocks, start trials excluded. */
+function scoreLevel(trials, L){
+  const a = trials.filter(t => t.phase === 'test' && t.n_level === L && !t.start_trial);
+  const prac = trials.filter(t => t.phase === 'practice' && t.n_level === L);
+  const o = {};
+  if (prac.length){
+    const passes = Math.max(...prac.map(t => t.block_num));
+    const lastP = prac.filter(t => t.block_num === passes && !t.start_trial && t.is_target);
+    o.practice_passes = passes;
+    o.practice_hit_rate = lastP.length ? r3(lastP.filter(t => t.sdt_outcome === 'hit').length / lastP.length) : null;
+  }
+  if (!a.length) return o;
+  const T = a.filter(t => t.is_target), N = a.filter(t => !t.is_target);
+  const cnt = k => a.filter(t => t.sdt_outcome === k).length;
+  const hits = cnt('hit'), fa = cnt('false_alarm');
+  o.blocks = new Set(trials.filter(t => t.phase === 'test' && t.n_level === L).map(t => t.block_num)).size;
+  o.trials = a.length; o.targets = T.length; o.nontargets = N.length;
+  o.hits = hits; o.misses = T.length - hits; o.false_alarms = fa;
+  o.correct_rejections = cnt('correct_rejection'); o.no_responses = cnt('no_response');
+  o.accuracy = r3(a.filter(t => t.correct).length / a.length);
+  const H = T.length ? hits / T.length : null, F = N.length ? fa / N.length : null;
+  o.hit_rate = r3(H); o.fa_rate = r3(F);
+  if (T.length && N.length){
+    const zH = qnorm((hits + 0.5) / (T.length + 1)), zF = qnorm((fa + 0.5) / (N.length + 1));
+    o.dprime = r3(zH - zF); o.criterion_c = r3(-(zH + zF) / 2);
+    const clip = (p, k) => p <= 0 ? 1 / (2 * k) : p >= 1 ? 1 - 1 / (2 * k) : p;
+    o.dprime_st = r3(qnorm(clip(H, T.length)) - qnorm(clip(F, N.length)));
+    o.pr = r3(H - F);
+  }
+  const rtH = a.filter(t => t.sdt_outcome === 'hit' && t.rt_ms != null).map(t => t.rt_ms);
+  const rtC = a.filter(t => t.sdt_outcome === 'correct_rejection' && t.rt_ms != null).map(t => t.rt_ms);
+  o.rt_hit_mean_ms = r1(mean(rtH)); o.rt_hit_median_ms = r1(median(rtH)); o.rt_hit_sd_ms = r1(sd(rtH));
+  o.rt_cr_mean_ms = r1(mean(rtC));
+  o.ies_ms = (o.rt_hit_mean_ms != null && H > 0) ? r1(o.rt_hit_mean_ms / H) : null;
+  const lu = N.filter(t => t.lure_type !== 'none'), nl = N.filter(t => t.lure_type === 'none');
+  o.lures = lu.length;
+  o.lure_fa_rate = lu.length ? r3(lu.filter(t => t.sdt_outcome === 'false_alarm').length / lu.length) : null;
+  o.nonlure_fa_rate = nl.length ? r3(nl.filter(t => t.sdt_outcome === 'false_alarm').length / nl.length) : null;
+  return o;
+}
+/*PURE-END*/
+
+/* ---------- glyphs ---------- */
+const ICON_YES = '<svg viewBox="0 0 100 100" aria-hidden="true"><path d="M18 52 41 75 84 27"/></svg>';
+const ICON_NO = '<svg viewBox="0 0 100 100" aria-hidden="true"><path d="M24 24 76 76M76 24 24 76"/></svg>';
+const POS_NAME = {'1':'en haut à gauche','2':'en haut au milieu','3':'en haut à droite','4':'au milieu à gauche','6':'au milieu à droite','7':'en bas à gauche','8':'en bas au milieu','9':'en bas à droite'};
+function mini(pos){
+  let h = '<span class="mini9">';
+  for (let k = 1; k <= 9; k++) h += '<i class="' + (k === 5 ? 'c' : String(k) === String(pos) ? 'on' : '') + '"></i>';
+  return h + '</span>';
+}
+const itemHtml = (S, v) => S.stimSet === 'spatial' ? mini(v) : esc(v);
+
+/* Worked example shown in the protocol panel and in the instructions. */
+const EX = {0:[0,'T',1,'T',2,3], 1:[0,0,1,2,2,3], 2:[0,1,0,2,1,2], 3:[0,1,2,0,3,2]};
+function exampleStrip(S, n){
+  const pool = shuffle(poolFor(S, n), mulberry32(11)), t0 = target0Of(S);
+  const items = EX[n].map(k => k === 'T' ? t0 : pool[k]);
+  const cls = classify(items, n, t0);
+  return '<div class="strip">' + items.map((v, i) => {
+    const yes = cls[i].is_target === 1;
+    const lab = yes ? 'OUI' : (S.respMode === 'target' ? '—' : 'NON');
+    return '<div class="tile' + (yes ? ' yes' : '') + '"><span class="item">' + itemHtml(S, v) + '</span><span class="ans">' + lab + '</span></div>';
+  }).join('') + '</div>';
+}
+
+/* ---------- settings ---------- */
+function store(key, val){ try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
+function recall(key){ try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; } }
+let settings = sanitize(recall('nback.settings'));
+
+const FIELDS = [
+  {group:'Niveaux de charge', items:[
+    {k:'run0', type:'bool', label:'0-back (condition contrôle)', hint:'Répondre OUI à une cible fixe. Mesure l’attention et la vitesse sans mise à jour en mémoire de travail.'},
+    {k:'run1', type:'bool', label:'1-back', hint:'Même stimulus que le précédent.'},
+    {k:'run2', type:'bool', label:'2-back', hint:'Niveau qui distingue le mieux les âges entre 7 et 13 ans (Pelegrina et coll., 2015).'},
+    {k:'run3', type:'bool', label:'3-back', hint:'La plupart des enfants de 7 ans ne le terminent pas ; à réserver aux plus âgés ou avec la règle d’arrêt.'}
+  ]},
+  {group:'Stimuli', items:[
+    {k:'stimSet', type:'select', label:'Type de stimulus', options:[['letters','Lettres (version verbale, Pelegrina et coll.)'],['spatial','Positions dans une grille 3 × 3 (version visuospatiale)']]},
+    {k:'letters', type:'text', label:'Lettres utilisées', hint:'Majuscules, au moins 6. Par défaut, les 20 consonnes de Pelegrina et coll. (2015).'},
+    {k:'target0', type:'text', label:'Cible du 0-back (lettres)', hint:'Une lettre absente de la liste ci-dessus.'},
+    {k:'target0Pos', type:'select', label:'Cible du 0-back (positions)', options:POSITIONS.map(p => [p, 'Case ' + POS_NAME[p]])}
+  ]},
+  {group:'Structure de chaque niveau', items:[
+    {k:'practiceTrials', label:'Essais de pratique', hint:'Essais cotés de la pratique, plus n essais de départ. 0 = aucune pratique.'},
+    {k:'blocks', label:'Blocs de test'},
+    {k:'trials', label:'Essais cotés par bloc', hint:'S’y ajoutent n essais de départ, jamais des cibles et exclus des scores.'},
+    {k:'targets', label:'Cibles par bloc', hint:'6 sur 20 = 30 %, comme Pelegrina et coll. (2015). Au plus la moitié des essais.'},
+    {k:'luresN2', label:'Leurres n+1 par bloc', hint:'Stimulus vu n+1 essais plus tôt. 0 = aucun leurre (version classique).'},
+    {k:'luresN1', label:'Leurres n-1 par bloc', hint:'Stimulus vu n-1 essais plus tôt (2-back et 3-back seulement).'},
+    {k:'maxConsec', label:'Cibles consécutives, maximum'}
+  ]},
+  {group:'Minutage, en millisecondes', items:[
+    {k:'stimMs', label:'Affichage du stimulus'},
+    {k:'isiMs', label:'Écran vide après le stimulus', hint:'La réponse est acceptée pendant l’affichage et l’écran vide (3 500 ms par défaut).'},
+    {k:'leadMs', label:'Attente avant le premier stimulus d’un bloc'},
+    {k:'feedbackMs', label:'Durée de la rétroaction'}
+  ]},
+  {group:'Réponses', items:[
+    {k:'respMode', type:'select', label:'Mode de réponse', options:[['two','Deux boutons, OUI et NON (Pelegrina et coll.)'],['target','Un bouton OUI, seulement pour les cibles']]},
+    {k:'yesSide', type:'select', label:'Côté du bouton OUI', hint:'Pour contrebalancer entre participants, changez ce réglage d’une séance à l’autre.', options:[['right','À droite'],['left','À gauche']]}
+  ]},
+  {group:'Pratique, rétroaction et arrêt', items:[
+    {k:'practiceFeedback', type:'bool', label:'Rétroaction pendant la pratique', hint:'« Bravo ! », « Oups ! » ou « Trop lent » après chaque essai.'},
+    {k:'testFeedback', type:'bool', label:'Rétroaction pendant les blocs de test'},
+    {k:'practiceCriterion', label:'Seuil de la pratique, en % de cibles', hint:'Sous ce seuil, refaire la pratique est proposé en premier. 60 dans Pelegrina et coll.'},
+    {k:'discontinueBelow', label:'Règle d’arrêt, en % de cibles', hint:'Sous ce seuil dans un bloc de test, la séance s’arrête et les niveaux suivants ne sont pas passés. 60 dans Pelegrina et coll. 0 = jamais.'}
+  ]},
+  {group:'Affichage', items:[
+    {k:'stimScale', label:'Taille des stimuli, en %', hint:'100 = taille de base, proportionnelle à l’écran. La taille réelle en pixels est enregistrée.'},
+    {k:'stageTheme', type:'select', label:'Couleurs de l’écran de tâche', options:[['light','Noir sur fond blanc'],['dark','Blanc sur fond noir']]},
+    {k:'fixDuringIsi', type:'bool', label:'Croix de fixation pendant l’écran vide', hint:'Décoché : écran vide, comme Pelegrina et coll.'}
+  ]},
+  {group:'Export', items:[
+    {k:'csvFormat', type:'select', label:'Format des fichiers CSV', options:[['comma','Virgule et point décimal (R, SPSS, jamovi)'],['semicolon','Point-virgule et virgule décimale (Excel en français)']]}
+  ]}
+];
+function renderSettings(){
+  const form = $('#settingsForm');
+  form.innerHTML = FIELDS.map((g, gi) => '<div class="group" role="group" aria-labelledby="grp-' + gi + '"><h3 id="grp-' + gi + '">' + g.group + '</h3><div class="grid">' + g.items.map(f => {
+    const id = 'set-' + f.k, hint = f.hint ? '<span class="hint">' + f.hint + '</span>' : '';
+    if (f.type === 'bool') return '<div class="check"><input type="checkbox" id="' + id + '" data-k="' + f.k + '"><label for="' + id + '">' + f.label + '</label>' + hint + '</div>';
+    if (f.type === 'select') return '<div class="field"><label for="' + id + '">' + f.label + '</label><select id="' + id + '" data-k="' + f.k + '">' + f.options.map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('') + '</select>' + hint + '</div>';
+    if (f.type === 'text') return '<div class="field"><label for="' + id + '">' + f.label + '</label><input type="text" class="mono" id="' + id + '" data-k="' + f.k + '" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">' + hint + '</div>';
+    return '<div class="field"><label for="' + id + '">' + f.label + '</label><input type="number" inputmode="numeric" id="' + id + '" data-k="' + f.k + '" min="' + LIMITS[f.k][0] + '" max="' + LIMITS[f.k][1] + '" step="1">' + hint + '</div>';
+  }).join('') + '</div></div>').join('');
+  fillSettings();
+}
+function fillSettings(){
+  document.querySelectorAll('#settingsForm [data-k]').forEach(el => {
+    const v = settings[el.dataset.k];
+    if (el.type === 'checkbox') el.checked = v; else el.value = v;
+  });
+}
+function readSettings(){
+  const raw = {};
+  document.querySelectorAll('#settingsForm [data-k]').forEach(el => { raw[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value; });
+  settings = sanitize(raw);
+  store('nback.settings', settings);
+  fillSettings();
+  renderProtocol();
+}
+
+/* ---------- storage ---------- */
+const DB = {
+  db:null, ok:false, tried:false, mem:new Map(),
+  async open(){
+    try {
+      this.db = await new Promise((res, rej) => {
+        const r = indexedDB.open('nback-terrain', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('sessions', {keyPath:'id'});
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+        r.onblocked = () => rej(new Error('blocked'));
+      });
+      const all = await new Promise((res, rej) => {
+        const q = this.db.transaction('sessions').objectStore('sessions').getAll();
+        q.onsuccess = () => res(q.result || []);
+        q.onerror = () => rej(q.error);
+      });
+      all.forEach(s => this.mem.set(s.id, s));
+      this.ok = true;
+    } catch (e) { this.ok = false; }
+    this.tried = true;
+  },
+  tx(fn){
+    if (!this.ok) return Promise.resolve();
+    return new Promise((res, rej) => {
+      try {
+        const t = this.db.transaction('sessions', 'readwrite');
+        fn(t.objectStore('sessions'));
+        t.oncomplete = () => res();
+        t.onerror = t.onabort = () => rej(t.error);
+      } catch (e) { rej(e); }
+    }).catch(() => { this.ok = false; renderStates(); });
+  },
+  put(s){ this.mem.set(s.id, s); return this.tx(st => st.put(s)); },
+  del(id){ this.mem.delete(id); return this.tx(st => st.delete(id)); },
+  clear(){ this.mem.clear(); return this.tx(st => st.clear()); },
+  list(){ return [...this.mem.values()].sort((a, b) => (a.session_start < b.session_start ? 1 : -1)); }
+};
+
+/* ---------- protocol panel ---------- */
+const soaOf = S => S.stimMs + S.isiMs;
+function expectedTest(S){ return levelsOf(S).reduce((p, n) => p + S.blocks * (n + S.trials), 0); }
+function estimateMinutes(S){
+  const soa = soaOf(S);
+  let ms = 0;
+  for (const n of levelsOf(S)){
+    ms += 40000;
+    if (S.practiceTrials) ms += (n + S.practiceTrials) * (soa + (S.practiceFeedback ? S.feedbackMs + 400 : 0)) + S.leadMs + 10000;
+    ms += S.blocks * ((n + S.trials) * (soa + (S.testFeedback ? S.feedbackMs + 400 : 0)) + S.leadMs + 8000);
+  }
+  return Math.max(1, Math.round(ms / 60000));
+}
+function renderProtocol(){
+  const S = settings, lv = levelsOf(S);
+  const lures = [];
+  if (S.luresN2) lures.push(S.luresN2 + ' n+1');
+  if (S.luresN1) lures.push(S.luresN1 + ' n-1');
+  const rows = [
+    ['Niveaux, dans l’ordre', lv.map(n => n + '-back').join(', ')],
+    ['Stimuli', S.stimSet === 'spatial' ? 'Positions 3 × 3' : S.letters.length + ' lettres'],
+    ['Pratique par niveau', S.practiceTrials ? S.practiceTrials + ' essais' + (S.practiceFeedback ? ', avec rétroaction' : '') : 'aucune'],
+    ['Test par niveau', S.blocks + ' × ' + S.trials + ' essais (+ n de départ)'],
+    ['Cibles par bloc', S.targets + ' (' + Math.round(S.targets / S.trials * 100) + ' %)'],
+    ['Leurres par bloc', lures.length ? lures.join(', ') : 'aucun'],
+    ['Stimulus puis écran vide', S.stimMs + ' + ' + S.isiMs + ' ms'],
+    ['Réponse', S.respMode === 'two' ? 'OUI / NON, OUI à ' + (S.yesSide === 'right' ? 'droite' : 'gauche') : 'OUI seulement, à ' + (S.yesSide === 'right' ? 'droite' : 'gauche')],
+    ['Règle d’arrêt', S.discontinueBelow ? '< ' + S.discontinueBelow + ' % de cibles' : 'aucune'],
+    ['Durée approximative', estimateMinutes(S) + ' min']
+  ];
+  $('#protoList').innerHTML = rows.map(r => '<li><span>' + r[0] + '</span><span>' + r[1] + '</span></li>').join('');
+  const n = lv.includes(2) ? 2 : lv[lv.length - 1];
+  const sc = $('#protoScreen');
+  sc.dataset.theme = S.stageTheme;
+  sc.innerHTML = exampleStrip(S, n) + '<span class="cap">Exemple au ' + n + '-back</span>';
+  $('#protoNote').textContent = (S.respMode === 'two'
+    ? 'L’enfant répond à chaque stimulus avec deux boutons, OUI et NON, en bas de l’écran.'
+    : 'L’enfant appuie sur le bouton OUI seulement quand il voit une cible.')
+    + ' Tenir la tablette à l’horizontale. Pour arrêter une séance en cours, maintenir le bouton « Arrêter » pendant 1,5 seconde.';
+}
+
+/* ---------- status chips ---------- */
+let offlineReady = false;
+function renderStates(){
+  const chips = [];
+  if (DB.tried) chips.push(DB.ok ? ['good', 'Données conservées sur cet appareil'] : ['bad', 'Stockage indisponible : exportez avant de fermer']);
+  if (IN_VIEWER) chips.push(['warn', 'Version d’essai : internet requis']);
+  else chips.push(offlineReady ? ['good', 'Prête pour le hors-ligne'] : ['warn', 'Hors-ligne non activé']);
+  const pending = DB.list().filter(s => !s.exported_at && s.trials.length).length;
+  if (pending) chips.push(['warn', pending + (pending > 1 ? ' séances à exporter' : ' séance à exporter')]);
+  $('#storeWarn').hidden = DB.ok || !DB.tried;
+  $('#states').innerHTML = chips.map(c => '<span class="chip ' + c[0] + '">' + c[1] + '</span>').join('');
+}
+
+/* ---------- tabs ---------- */
+function showTab(name){
+  ['seance', 'reglages', 'donnees'].forEach(t => {
+    $('#view-' + t).hidden = t !== name;
+    $('#tab-' + t).setAttribute('aria-selected', t === name ? 'true' : 'false');
+  });
+  if (name === 'donnees') renderSessions();
+  if (name === 'seance') renderStates();
+}
+document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+
+/* ---------- the task ---------- */
+const ABORT = {abort:true};
+const stage = $('#stage'), fixEl = $('#fix'), stimEl = $('#stim'), gridEl = $('#grid9'), fbEl = $('#fb');
+const msgEl = $('#stageMsg'), quitEl = $('#quit');
+gridEl.innerHTML = Array.from({length: 9}, (_, k) => '<i data-pos="' + (k + 1) + '"' + (k === 4 ? ' class="c"' : '') + '></i>').join('');
+let run = null, wakeLock = null;
+
+function frame(){
+  return new Promise((res, rej) => requestAnimationFrame(t => {
+    if (run && run.aborted) return rej(ABORT);
+    if (run) run.lastT = t;
+    res(t);
+  }));
+}
+/* Changes made in one animation frame reach the screen at the next one, so
+   a change is requested on the frame that lands within half a frame of the
+   target, and the onset is stamped with the following frame's time. */
+async function waitUntil(target){
+  const f = run.frameMs;
+  let t = run.lastT || 0;
+  while (t < target - 1.5 * f) t = await frame();
+  return t;
+}
+async function measureFrame(){
+  const ts = [];
+  for (let i = 0; i < 40; i++) ts.push(await frame());
+  const d = [];
+  for (let i = 1; i < ts.length; i++) d.push(ts[i] - ts[i - 1]);
+  d.sort((a, b) => a - b);
+  const m = d[d.length >> 1];
+  return (m > 2 && m < 60) ? m : 16.667;
+}
+function logEvent(type, t, extra){
+  if (!run) return;
+  const ev = run.session.events;
+  ev.push(Object.assign({event_index: ev.length + 1, type, t_ms: r1(t), unix_ms: Math.round(T0 + t), state: run.state,
+    phase: run.phase, n_level: run.level == null ? '' : run.level, block_num: run.blockNum, trial_index: run.cur ? run.cur.trial_index : ''}, extra || {}));
+}
+function evClock(ev, hnd){
+  const ts = ev && ev.timeStamp;
+  if (typeof ts === 'number' && ts > 0 && ts <= hnd + 5 && hnd - ts < 2000) return {t: ts, clock: 'event'};
+  return {t: hnd, clock: 'handler'};
+}
+function persist(){ if (run) DB.put(run.session); }
+
+function respOf(side){
+  const S = run.settings;
+  if (side !== 'left' && side !== 'right') return '';
+  if (side === S.yesSide) return 'yes';
+  return S.respMode === 'two' ? 'no' : '';
+}
+function input(side, source, ev, hnd, extra){
+  if (!run || run.state === 'message' || run.state === 'init') return;
+  const c = evClock(ev, hnd), cur = run.cur, resp = respOf(side);
+  logEvent(source === 'touch' ? 'pointerdown' : 'keydown', c.t, Object.assign({target: side, response: resp, source, t_handler_ms: r1(hnd)}, extra));
+  if (cur) cur.n_inputs++;
+  if (run.accepting && resp){
+    run.nResp++;
+    if (!run.resp) run.resp = {resp, side, source, t: c.t, clock: c.clock, hnd, x: extra.x, y: extra.y};
+  }
+}
+stage.addEventListener('pointerdown', e => {
+  const hnd = performance.now();
+  if (e.target.closest('#quit') || e.target.closest('#stageMsg')) return;
+  e.preventDefault();
+  const b = e.target.closest('.resp');
+  if (b) b.classList.add('down');
+  input(b ? b.dataset.side : 'other', 'touch', e, hnd, {x: Math.round(e.clientX), y: Math.round(e.clientY), pointer_type: e.pointerType || ''});
+}, {passive:false});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(n => stage.addEventListener(n, () => {
+  document.querySelectorAll('.resp.down').forEach(b => b.classList.remove('down'));
+}));
+['contextmenu', 'dblclick', 'gesturestart', 'selectstart'].forEach(n => stage.addEventListener(n, e => e.preventDefault()));
+document.addEventListener('keydown', e => {
+  if (!run || e.repeat || run.state === 'message') return;
+  const hnd = performance.now();
+  const side = (e.key === 'ArrowLeft' || e.key === 'f' || e.key === 'F') ? 'left' : (e.key === 'ArrowRight' || e.key === 'j' || e.key === 'J') ? 'right' : null;
+  if (!side) return;
+  e.preventDefault();
+  input(side, 'key', e, hnd, {key: e.key});
+});
+document.addEventListener('visibilitychange', () => {
+  if (!run) return;
+  logEvent('visibility', performance.now(), {detail: document.visibilityState});
+  if (document.visibilityState === 'hidden' && run.cur) run.cur.page_hidden = 1;
+});
+window.addEventListener('resize', () => { if (run) logEvent('resize', performance.now(), {detail: innerWidth + 'x' + innerHeight}); });
+
+let quitTimer = null;
+quitEl.addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
+  quitEl.classList.add('holding');
+  quitTimer = setTimeout(() => {
+    if (!run || run.aborted) return;
+    logEvent('abort', performance.now());
+    run.aborted = true;
+    if (run.onAbort) run.onAbort();
+  }, 1500);
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(n => quitEl.addEventListener(n, () => { clearTimeout(quitTimer); quitEl.classList.remove('holding'); }));
+
+function message(title, html, buttons){
+  return new Promise((res, rej) => {
+    run.state = 'message';
+    stage.classList.add('is-msg');
+    $('#msgTitle').textContent = title;
+    $('#msgBody').innerHTML = html;
+    const box = $('#msgBtns');
+    box.innerHTML = '';
+    const close = () => { run.onAbort = null; msgEl.hidden = true; stage.classList.remove('is-msg'); };
+    buttons.forEach(b => {
+      const el = document.createElement('button');
+      el.type = 'button'; el.className = 'sbtn' + (b.primary ? ' primary' : ''); el.textContent = b.label; el.disabled = true;
+      el.addEventListener('click', () => { logEvent('message_button', performance.now(), {target: b.value}); close(); res(b.value); });
+      box.appendChild(el);
+    });
+    /* short guard so a late response tap cannot dismiss the message */
+    setTimeout(() => box.querySelectorAll('button').forEach(el => { el.disabled = false; }), 700);
+    run.onAbort = () => { close(); rej(ABORT); };
+    msgEl.hidden = false;
+  });
+}
+
+function setButtons(S){
+  const yes = '<span>OUI</span>', no = '<span>NON</span>';
+  const yesB = S.yesSide === 'right' ? $('#btnR') : $('#btnL'), noB = S.yesSide === 'right' ? $('#btnL') : $('#btnR');
+  yesB.innerHTML = ICON_YES + yes; yesB.setAttribute('aria-label', 'Oui'); yesB.hidden = false;
+  noB.innerHTML = ICON_NO + no; noB.setAttribute('aria-label', 'Non'); noB.hidden = S.respMode !== 'two';
+}
+function showStim(S, item){
+  if (S.stimSet === 'spatial') gridEl.querySelector('[data-pos="' + item + '"]').classList.add('on');
+  else { stimEl.textContent = item; stimEl.style.visibility = 'visible'; }
+}
+function hideStim(S){
+  if (S.stimSet === 'spatial') gridEl.querySelectorAll('i.on').forEach(el => el.classList.remove('on'));
+  else stimEl.style.visibility = 'hidden';
+}
+
+async function runTrial(spec, k){
+  const S = run.settings, f = run.frameMs, soa = soaOf(S);
+  const fbOn = run.phase === 'practice' ? S.practiceFeedback : S.testFeedback;
+  const tr = {
+    phase: run.phase, n_level: spec.n, level_rank: run.levelRank, block_num: run.blockNum, trial_in_block: k, trial_index: ++run.trialCount,
+    start_trial: spec.start, item: spec.item, item_n_back: spec.back, target_item: spec.n === 0 ? target0Of(S) : '',
+    is_target: spec.is_target, lure_type: spec.lure, trial_type: spec.type, correct_resp: spec.is_target ? 'yes' : 'no',
+    response: '', response_source: '', button_side: '', correct: 0, sdt_outcome: '', rt_ms: null, rt_clock: '', n_responses: 0,
+    stim_planned_ms: S.stimMs, stim_actual_ms: null, isi_planned_ms: S.isiMs, soa_planned_ms: soa, soa_actual_ms: null,
+    resp_window_actual_ms: null, feedback_shown: fbOn ? 1 : 0,
+    t_stim_on_ms: null, t_stim_off_ms: null, t_window_end_ms: null, t_resp_ms: null, t_resp_handler_ms: null, stim_on_unix_ms: null,
+    touch_x: null, touch_y: null, n_inputs: 0, page_hidden: 0
+  };
+  run.cur = tr; run.resp = null; run.nResp = 0; run.accepting = false;
+
+  await waitUntil(run.nextOnset);
+  fixEl.style.visibility = 'hidden';
+  showStim(S, spec.item);
+  const tOn = await frame();
+  run.state = 'stim'; run.accepting = true;
+  logEvent('stim_on', tOn, {detail: spec.item});
+  if (run.prevTrial) run.prevTrial.soa_actual_ms = r1(tOn - run.prevTrial.t_stim_on_ms);
+
+  let t = tOn, shown = true, tOff = null;
+  const end = tOn + soa;
+  for (;;){
+    if (shown && t >= tOn + S.stimMs - 1.5 * f){
+      hideStim(S);
+      if (S.fixDuringIsi) fixEl.style.visibility = 'visible';
+      shown = false; t = tOff = await frame();
+      run.state = 'isi';
+      logEvent('stim_off', tOff);
+      continue;
+    }
+    if (t >= end - 1.5 * f) break;
+    t = await frame();
+  }
+  run.accepting = false;
+  const tEnd = performance.now();
+  const resp = run.resp;
+
+  tr.stim_actual_ms = r1(tOff - tOn); tr.t_stim_on_ms = r1(tOn); tr.t_stim_off_ms = r1(tOff); tr.t_window_end_ms = r1(tEnd);
+  tr.resp_window_actual_ms = r1(tEnd - tOn); tr.stim_on_unix_ms = Math.round(T0 + tOn); tr.n_responses = run.nResp;
+  if (resp){
+    tr.response = resp.resp; tr.response_source = resp.source; tr.button_side = resp.side;
+    tr.rt_ms = r1(resp.t - tOn); tr.rt_clock = resp.clock; tr.t_resp_ms = r1(resp.t); tr.t_resp_handler_ms = r1(resp.hnd);
+    tr.touch_x = resp.x == null ? null : resp.x; tr.touch_y = resp.y == null ? null : resp.y;
+    const yes = resp.resp === 'yes';
+    tr.correct = yes === !!spec.is_target ? 1 : 0;
+    tr.sdt_outcome = spec.is_target ? (yes ? 'hit' : 'miss') : (yes ? 'false_alarm' : 'correct_rejection');
+  } else {
+    tr.response = 'none'; tr.response_source = 'none';
+    if (S.respMode === 'target'){ tr.correct = spec.is_target ? 0 : 1; tr.sdt_outcome = spec.is_target ? 'miss' : 'correct_rejection'; }
+    else { tr.correct = 0; tr.sdt_outcome = 'no_response'; }
+  }
+
+  if (fbOn){
+    run.state = 'feedback';
+    fixEl.style.visibility = 'hidden';
+    const kind = tr.sdt_outcome === 'no_response' ? 'slow' : tr.correct ? 'good' : 'bad';
+    fbEl.dataset.kind = kind;
+    fbEl.textContent = kind === 'slow' ? 'Trop lent' : kind === 'good' ? 'Bravo !' : 'Oups !';
+    fbEl.style.visibility = 'visible';
+    const tFb = await frame();
+    logEvent('feedback_on', tFb, {detail: kind});
+    await waitUntil(tFb + S.feedbackMs);
+    fbEl.style.visibility = 'hidden';
+    if (S.fixDuringIsi) fixEl.style.visibility = 'visible';
+    const tB = await frame();
+    run.nextOnset = tB + 400;
+  } else run.nextOnset = tOn + soa;
+
+  run.state = 'isi';
+  run.session.trials.push(tr);
+  run.prevTrial = tr;
+  persist();
+  return tr;
+}
+
+async function runBlock(phase, blockNum, specs){
+  const S = run.settings;
+  run.phase = phase; run.blockNum = blockNum; run.cur = null; run.prevTrial = null;
+  run.state = 'lead';
+  setButtons(S);
+  gridEl.style.visibility = S.stimSet === 'spatial' ? 'visible' : 'hidden';
+  fixEl.style.visibility = 'visible';
+  logEvent('block_start', performance.now(), {detail: specs[0].n + '-back, ' + specs.length + ' trials'});
+  const t0 = await frame();
+  run.nextOnset = t0 + S.leadMs;
+  const out = [];
+  for (let i = 0; i < specs.length; i++) out.push(await runTrial(specs[i], i + 1));
+  await waitUntil(run.nextOnset);
+  run.cur = null;
+  gridEl.style.visibility = 'hidden'; fixEl.style.visibility = 'hidden';
+  logEvent('block_end', performance.now());
+  const sc = out.filter(t => !t.start_trial), tg = sc.filter(t => t.is_target);
+  return {hits: tg.filter(t => t.sdt_outcome === 'hit').length, targets: tg.length,
+    correct: sc.filter(t => t.correct).length, n: sc.length};
+}
+
+const NWORD = {1:'juste avant', 2:'il y a deux', 3:'il y a trois'};
+function ruleText(S, n){
+  const L = S.stimSet !== 'spatial';
+  const what = L ? 'la lettre' : 'le carré';
+  const press = S.respMode === 'two' ? 'appuie sur <strong>OUI</strong>' : 'appuie sur <strong>OUI</strong>';
+  const other = S.respMode === 'two' ? 'Sinon, appuie sur <strong>NON</strong>.' : 'Sinon, ne touche à rien.';
+  if (n === 0) return 'Chaque fois que tu vois ' + (L ? 'la lettre <strong>' + esc(S.target0) + '</strong>' : 'le carré <strong>' + POS_NAME[S.target0Pos] + '</strong>') + ', ' + press + '. ' + other;
+  const pr = L ? 'celle' : 'celui';
+  const ref = n === 1 ? pr + ' juste avant' : pr + ' d’' + NWORD[n] + (L ? ' lettres' : ' carrés');
+  const same = L ? 'est la même que ' + ref : 'est à la même place que ' + ref;
+  return 'Quand ' + what + ' ' + same + ', ' + press + '. ' + other;
+}
+function instructionsHtml(S, n, first){
+  const intro = S.stimSet === 'spatial'
+    ? 'Un carré noir va apparaître dans une des cases, une fois à la fois.'
+    : 'Des lettres vont apparaître au milieu de l’écran, une à la fois.';
+  const pr = S.stimSet === 'spatial' ? 'celui' : 'celle';
+  const caution = n >= 2 ? '<p class="small" style="margin-top:12px">Attention : pas ' + pr + ' juste avant, ' + pr + ' d’il y a ' + (n === 2 ? 'deux' : 'trois') + '.</p>' : '';
+  return (first ? '<p>' + intro + '</p><p style="margin-top:12px">' : '<p>') + ruleText(S, n) + '</p>' + caution
+    + '<p class="small" style="margin-top:18px">Exemple :</p>' + exampleStrip(S, n)
+    + '<p style="margin-top:18px">Réponds vite, mais surtout sans te tromper. Tu peux répondre jusqu’à ce que le prochain apparaisse.</p>';
+}
+const levelTitle = (n, first) => (first ? 'Règle du jeu' : 'Nouvelle règle') + ' : ' + n + '-back';
+
+const isoLocal = d => {
+  const p = n => String(n).padStart(2, '0'), off = -d.getTimezoneOffset(), a = Math.abs(off);
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+    + (off >= 0 ? '+' : '-') + p(Math.floor(a / 60)) + ':' + p(a % 60);
+};
+
+async function startSession(){
+  const pid = $('#f-pid').value.trim();
+  $('#pidErr').hidden = !!pid;
+  if (!pid){ $('#f-pid').focus(); return; }
+  if (run) return;
+  await DB.ready;
+  if (run) return;
+  const S = Object.assign({}, settings), now = new Date();
+  const seed = Math.floor(Math.random() * 4294967296) >>> 0;
+  const ageRaw = parseFloat(String($('#f-age').value).replace(',', '.'));
+  const session = {
+    app: 'nback', id: now.getTime().toString(36) + '-' + Math.floor(Math.random() * 46656).toString(36).padStart(3, '0'),
+    participant_id: pid, session_label: $('#f-session').value.trim(), group_label: $('#f-group').value.trim(),
+    age_years: Number.isFinite(ageRaw) ? ageRaw : null,
+    experimenter: $('#f-exp').value.trim(), notes: $('#f-notes').value.trim(),
+    session_start: isoLocal(now), session_end: '', status: 'in_progress', discontinued_level: '', app_version: APP_VERSION, seed,
+    settings: S, device: {}, trials: [], events: [], exported_at: ''
+  };
+  store('nback.form', {session: session.session_label, group: session.group_label, exp: session.experimenter});
+  run = {session, settings: S, rng: mulberry32(seed), aborted: false, onAbort: null, state: 'init', phase: '', blockNum: '', level: null, levelRank: 0,
+    cur: null, resp: null, nResp: 0, accepting: false, trialCount: 0, frameMs: 16.667, lastT: 0, nextOnset: 0, prevTrial: null};
+
+  stage.dataset.theme = S.stageTheme;
+  stage.style.setProperty('--stim-scale', String(S.stimScale / 100));
+  [fixEl, stimEl, gridEl, fbEl].forEach(el => { el.style.visibility = 'hidden'; });
+  setButtons(S);
+  stage.hidden = false;
+  document.body.style.overflow = 'hidden';
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  const size = S.stimSet === 'spatial' ? gridEl.querySelector('i').getBoundingClientRect().width : parseFloat(getComputedStyle(stimEl).fontSize);
+  stage.classList.add('is-msg');
+  session.device = {
+    user_agent: navigator.userAgent, viewport_w: innerWidth, viewport_h: innerHeight, screen_w: screen.width, screen_h: screen.height,
+    dpr: window.devicePixelRatio || 1, orientation: innerWidth >= innerHeight ? 'landscape' : 'portrait',
+    standalone: (navigator.standalone === true || matchMedia('(display-mode: standalone)').matches) ? 1 : 0,
+    stim_size_px: r1(size), frame_ms: null
+  };
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { wakeLock = null; }
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+  logEvent('session_start', performance.now());
+  persist();
+
+  let status = 'complete';
+  const lv = levelsOf(S);
+  try {
+    let measured = false;
+    for (let li = 0; li < lv.length && status === 'complete'; li++){
+      const n = lv[li];
+      run.level = n; run.levelRank = li + 1; run.phase = ''; run.blockNum = '';
+      logEvent('level_start', performance.now(), {detail: n + '-back'});
+      await message(levelTitle(n, li === 0), instructionsHtml(S, n, li === 0),
+        [{label: S.practiceTrials ? 'Commencer la pratique' : 'Commencer', value: 'go', primary: true}]);
+      if (!measured){ run.frameMs = await measureFrame(); session.device.frame_ms = Math.round(run.frameMs * 100) / 100; measured = true; }
+      if (S.practiceTrials){
+        for (let pass = 1; ; pass++){
+          const r = await runBlock('practice', pass, makeBlock(n, S.practiceTrials, practiceTargets(S), 0, 0, S.maxConsec, S, run.rng));
+          const below = r.targets && (r.hits / r.targets) * 100 < S.practiceCriterion;
+          const body = '<p>Pratique terminée.</p>'
+            + '<p style="margin-top:12px">Cibles trouvées : <strong>' + r.hits + ' sur ' + r.targets + '</strong>. Bonnes réponses : ' + r.correct + ' sur ' + r.n + '.</p>'
+            + (below ? '<p class="small" style="margin-top:12px">Pour l’expérimentateur : moins de ' + S.practiceCriterion + ' % des cibles trouvées. Refaire la pratique est recommandé' + (pass >= 3 ? ' (déjà ' + pass + ' passages).' : '.') + '</p>' : '')
+            + (S.testFeedback ? '' : '<p class="small" style="margin-top:12px">Pendant le jeu, il n’y aura plus de message après chaque réponse.</p>');
+          const choice = await message('Bien joué !', body,
+            [{label: 'Refaire la pratique', value: 'redo', primary: !!below}, {label: 'Commencer le jeu', value: 'go', primary: !below}]);
+          if (choice !== 'redo') break;
+          await message(levelTitle(n, false), '<p>' + ruleText(S, n) + '</p>' + exampleStrip(S, n), [{label: 'Recommencer la pratique', value: 'go', primary: true}]);
+        }
+      }
+      for (let b = 1; b <= S.blocks; b++){
+        const r = await runBlock('test', b, makeBlock(n, S.trials, S.targets, S.luresN1, S.luresN2, S.maxConsec, S, run.rng));
+        if (S.discontinueBelow > 0 && r.targets && (r.hits / r.targets) * 100 < S.discontinueBelow){
+          session.discontinued_level = n; status = 'discontinued';
+          logEvent('discontinue', performance.now(), {detail: n + '-back, block ' + b + ': ' + r.hits + '/' + r.targets + ' targets'});
+          break;
+        }
+        if (b < S.blocks) await message('Pause', '<p>Partie ' + b + ' sur ' + S.blocks + ' terminée. Repose-toi un instant.</p><p style="margin-top:12px">La règle reste la même : ' + ruleText(S, n).replace(/<[^>]+>/g, '').replace(/^./, c => c.toLowerCase()) + '</p>', [{label: 'Continuer', value: 'go', primary: true}]);
+      }
+    }
+  } catch (e) {
+    status = (e === ABORT) ? 'aborted' : 'error';
+    if (status === 'error') logEvent('error', performance.now(), {detail: String(e && e.message || e)});
+  }
+  run.aborted = false; run.cur = null; run.phase = ''; run.blockNum = ''; run.level = null;
+  session.status = status;
+  session.session_end = isoLocal(new Date());
+  logEvent('session_end', performance.now(), {detail: status});
+  await DB.put(session);
+  if (status === 'complete' || status === 'discontinued'){
+    try { await message('Terminé, bravo !', '<p>Merci ! Tu peux remettre la tablette à la personne responsable.</p>', [{label: 'Fermer', value: 'close', primary: true}]); } catch (e) {}
+  }
+  try { if (wakeLock) await wakeLock.release(); } catch (e) {}
+  wakeLock = null;
+  msgEl.hidden = true; stage.classList.remove('is-msg');
+  stage.hidden = true;
+  document.body.style.overflow = '';
+  run = null;
+  $('#f-pid').value = ''; $('#f-age').value = ''; $('#f-notes').value = ''; checkDuplicate();
+  showTab('donnees');
+  const nTest = session.trials.filter(t => t.phase === 'test').length;
+  flash(status === 'complete' ? 'Séance de ' + pid + ' enregistrée sur cet appareil : ' + nTest + ' essais de test.'
+    : status === 'discontinued' ? 'Séance de ' + pid + ' arrêtée par la règle d’arrêt au ' + session.discontinued_level + '-back. Les ' + nTest + ' essais de test sont conservés.'
+    : status === 'aborted' ? 'Séance de ' + pid + ' arrêtée. Les ' + session.trials.length + ' essais déjà faits sont conservés.'
+    : 'Une erreur a interrompu la séance de ' + pid + '. Les essais déjà faits sont conservés.', status === 'complete' ? '' : 'warn');
+}
+$('#startForm').addEventListener('submit', e => { e.preventDefault(); startSession(); });
+
+function checkDuplicate(){
+  const pid = $('#f-pid').value.trim(), lab = $('#f-session').value.trim(), el = $('#pidDup');
+  const hit = pid ? DB.list().find(s => s.participant_id === pid && s.session_label === lab) : null;
+  el.hidden = !hit;
+  if (hit) el.textContent = 'Une séance existe déjà pour ' + pid + (lab ? ' au temps ' + lab : '') + ' (' + fmtDate(hit.session_start) + '). Elle sera conservée ; la nouvelle s’ajoutera.';
+}
+['#f-pid', '#f-session'].forEach(s => $(s).addEventListener('input', () => { $('#pidErr').hidden = true; checkDuplicate(); }));
+
+/* ---------- data view ---------- */
+const fmtDate = iso => { try { return new Date(iso).toLocaleString('fr-CA', {dateStyle: 'medium', timeStyle: 'short'}); } catch (e) { return iso; } };
+const fr = (v, d) => v == null ? '–' : v.toFixed(d).replace('.', ',');
+const STATUS = {complete: ['good', 'Terminée'], discontinued: ['warn', 'Règle d’arrêt'], aborted: ['warn', 'Arrêtée'], in_progress: ['warn', 'Non terminée'], error: ['bad', 'Erreur']};
+function renderSessions(){
+  const list = DB.list(), wrap = $('#sessWrap');
+  $('#sessH').textContent = list.length ? 'Séances (' + list.length + ')' : 'Séances';
+  ['#expTrials', '#expEvents', '#expSessions', '#expJson', '#clearAll'].forEach(s => { $(s).disabled = !list.length; });
+  if (!list.length){
+    wrap.innerHTML = '<div class="empty">Aucune séance enregistrée sur cet appareil. Les séances apparaîtront ici dès le premier essai, avec d′ et les proportions de cibles et de fausses alarmes de chaque niveau.</div>';
+    return;
+  }
+  wrap.innerHTML = '<table><thead><tr><th>Participant</th><th>Début</th><th class="num">Essais</th><th>Par niveau</th><th>État</th><th></th></tr></thead><tbody>'
+    + list.map(s => {
+      const st = STATUS[s.status] || STATUS.error;
+      const sub = [s.session_label, s.group_label, s.age_years != null ? String(s.age_years).replace('.', ',') + ' ans' : ''].filter(Boolean).join(' · ');
+      const nTest = s.trials.filter(t => t.phase === 'test').length;
+      const lv = levelsOf(s.settings).map(L => {
+        const o = scoreLevel(s.trials, L);
+        if (o.trials == null) return '';
+        return '<div><b>' + L + '-back</b> <span>d′ ' + fr(o.dprime, 2) + ' · H ' + Math.round(o.hit_rate * 100) + ' % · FA ' + Math.round(o.fa_rate * 100) + ' %</span></div>';
+      }).join('') || '<span>–</span>';
+      return '<tr><td class="id">' + esc(s.participant_id) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</td>'
+        + '<td class="num">' + esc(String(s.session_start).slice(0, 16).replace('T', ' ')) + '</td>'
+        + '<td class="num">' + nTest + ' / ' + expectedTest(s.settings) + '</td>'
+        + '<td><div class="lv">' + lv + '</div></td>'
+        + '<td><div class="chips"><span class="chip ' + st[0] + '">' + st[1] + '</span>'
+        + '<span class="chip ' + (s.exported_at ? '' : 'warn') + '">' + (s.exported_at ? 'Exportée' : 'À exporter') + '</span></div></td>'
+        + '<td><div class="row-btns"><button type="button" class="btn small" data-act="csv" data-id="' + s.id + '">CSV</button>'
+        + '<button type="button" class="btn small danger" data-act="del" data-id="' + s.id + '">Supprimer</button></div></td></tr>';
+    }).join('') + '</tbody></table>';
+}
+function flash(text, kind){
+  const el = $('#dataMsg');
+  el.className = 'banner' + (kind ? ' ' + kind : '');
+  el.textContent = text; el.hidden = false;
+}
+
+/* two-step confirmation: the viewer never shows confirm() dialogs */
+function arm(btn, label, action){
+  if (btn.classList.contains('armed')){ btn.classList.remove('armed'); clearTimeout(btn._t); btn.textContent = btn._label; action(); return; }
+  btn._label = btn.textContent; btn.textContent = label; btn.classList.add('armed');
+  btn._t = setTimeout(() => { btn.classList.remove('armed'); btn.textContent = btn._label; }, 4000);
+}
+$('#sessWrap').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  const s = DB.mem.get(b.dataset.id);
+  if (!s) return;
+  if (b.dataset.act === 'csv') exportTrials([s], '_' + s.participant_id + (s.session_label ? '_' + s.session_label : ''));
+  else arm(b, 'Confirmer', async () => { await DB.del(s.id); renderSessions(); flash('Séance de ' + s.participant_id + ' supprimée.', 'warn'); });
+});
+$('#clearAll').addEventListener('click', e => {
+  const pending = DB.list().filter(s => !s.exported_at && s.trials.length).length;
+  arm(e.currentTarget, pending ? 'Confirmer : ' + pending + ' non exportée' + (pending > 1 ? 's' : '') : 'Confirmer la suppression',
+    async () => { await DB.clear(); renderSessions(); flash('Toutes les séances ont été supprimées.', 'warn'); });
+});
+
+/* ---------- export ---------- */
+function toCsv(rows, names){
+  const semi = settings.csvFormat === 'semicolon', sep = semi ? ';' : ',';
+  const cell = v => {
+    if (v == null) return '';
+    let s = (typeof v === 'number' && semi) ? String(v).replace('.', ',') : String(v);
+    return /[",;\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return '﻿' + [names.join(sep)].concat(rows.map(r => names.map(n => cell(r[n])).join(sep))).join('\r\n') + '\r\n';
+}
+function trialRows(list){
+  const out = [];
+  list.forEach(s => s.trials.forEach(t => out.push(Object.assign({
+    participant_id: s.participant_id, session_label: s.session_label, group_label: s.group_label, age_years: s.age_years, experimenter: s.experimenter,
+    session_id: s.id, session_start: s.session_start, session_status: s.status, app_version: s.app_version, seed: s.seed,
+    stimulus_set: s.settings.stimSet, response_mode: s.settings.respMode, yes_side: s.settings.yesSide,
+    frame_ms: s.device.frame_ms, viewport_w: s.device.viewport_w, viewport_h: s.device.viewport_h, dpr: s.device.dpr,
+    stim_size_px: s.device.stim_size_px, stage_theme: s.settings.stageTheme
+  }, t))));
+  return out;
+}
+function eventRows(list){
+  const out = [];
+  list.forEach(s => s.events.forEach(e => out.push(Object.assign({participant_id: s.participant_id, session_id: s.id}, e))));
+  return out;
+}
+function sessionRows(list){
+  return list.map(s => {
+    const S = s.settings, d = s.device;
+    const row = {
+      participant_id: s.participant_id, session_label: s.session_label, group_label: s.group_label, age_years: s.age_years, experimenter: s.experimenter, notes: s.notes,
+      session_id: s.id, session_start: s.session_start, session_end: s.session_end, session_status: s.status, discontinued_level: s.discontinued_level,
+      app_version: s.app_version, seed: s.seed,
+      n_practice_trials: s.trials.filter(t => t.phase === 'practice').length, n_test_trials: s.trials.filter(t => t.phase === 'test').length,
+      n_test_expected: expectedTest(S),
+      levels_planned: levelsOf(S).join(' '), stimulus_set: S.stimSet, letters: S.letters, target_0back: target0Of(S),
+      response_mode: S.respMode, yes_side: S.yesSide, blocks_per_level: S.blocks, trials_per_block: S.trials, targets_per_block: S.targets,
+      lures_n_minus1: S.luresN1, lures_n_plus1: S.luresN2, max_consec_targets: S.maxConsec, practice_trials: S.practiceTrials,
+      stim_ms: S.stimMs, isi_ms: S.isiMs, lead_ms: S.leadMs, feedback_ms: S.feedbackMs,
+      practice_feedback: S.practiceFeedback ? 1 : 0, test_feedback: S.testFeedback ? 1 : 0,
+      practice_criterion_pct: S.practiceCriterion, discontinue_below_pct: S.discontinueBelow, fix_during_isi: S.fixDuringIsi ? 1 : 0,
+      stim_scale_pct: S.stimScale, stage_theme: S.stageTheme,
+      frame_ms: d.frame_ms, viewport_w: d.viewport_w, viewport_h: d.viewport_h, screen_w: d.screen_w, screen_h: d.screen_h, dpr: d.dpr,
+      orientation: d.orientation, standalone: d.standalone, stim_size_px: d.stim_size_px, user_agent: d.user_agent, exported_at: s.exported_at
+    };
+    for (const L of LEVELS){
+      const o = scoreLevel(s.trials, L);
+      for (const k of Object.keys(o)) row['n' + L + '_' + k] = o[k];
+    }
+    return row;
+  });
+}
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); };
+const safeName = s => s.replace(/[^A-Za-z0-9_-]+/g, '-');
+
+async function saveFile(filename, text, mime){
+  if (IN_VIEWER){
+    let dl = null;
+    try { dl = await window.claude.use('downloads'); } catch (e) {}
+    if (!dl) return 'manual';
+    try { await dl.save({filename, data: text}); return 'saved'; }
+    catch (e) { return (e && e.code === 'declined') ? 'declined' : (e && e.code === 'rate_limited') ? 'busy' : 'manual'; }
+  }
+  const blob = new Blob([text], {type: mime});
+  try {
+    const file = new File([blob], filename, {type: mime});
+    if (navigator.maxTouchPoints > 0 && navigator.canShare && navigator.canShare({files: [file]})){
+      await navigator.share({files: [file], title: filename});
+      return 'saved';
+    }
+  } catch (e) { if (e && e.name === 'AbortError') return 'declined'; }
+  try {
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    return 'saved';
+  } catch (e) { return 'manual'; }
+}
+async function deliver(filename, text, mime, what){
+  $('#manual').hidden = true;
+  const how = await saveFile(filename, text, mime);
+  if (how === 'saved') flash(what + ' : fichier ' + filename + ' remis à l’appareil. Vérifiez qu’il s’ouvre avant de supprimer des séances.');
+  else if (how === 'declined') flash('Export annulé. Rien n’a été supprimé.', 'warn');
+  else if (how === 'busy') flash('Une demande d’enregistrement est déjà ouverte. Répondez-y, puis recommencez.', 'warn');
+  else {
+    $('#manualNote').textContent = 'L’enregistrement direct n’est pas possible ici. Copiez le contenu ci-dessous et collez-le dans un fichier nommé ' + filename + '.';
+    $('#manualText').value = text; $('#manual').hidden = false;
+    flash('Enregistrement direct impossible : utilisez la copie manuelle ci-dessous.', 'warn');
+  }
+  return how === 'saved';
+}
+async function exportTrials(list, tag){
+  const ok = await deliver('nback_essais' + safeName(tag || '') + '_' + stamp() + '.csv', toCsv(trialRows(list), COLS.trials), 'text/csv', 'Essais');
+  if (ok){
+    const at = isoLocal(new Date());
+    for (const s of list){ s.exported_at = at; await DB.put(s); }
+    renderSessions(); renderStates();
+  }
+}
+$('#expTrials').addEventListener('click', () => exportTrials(DB.list(), ''));
+$('#expEvents').addEventListener('click', () => deliver('nback_evenements_' + stamp() + '.csv', toCsv(eventRows(DB.list()), COLS.events), 'text/csv', 'Événements'));
+$('#expSessions').addEventListener('click', () => deliver('nback_seances_' + stamp() + '.csv', toCsv(sessionRows(DB.list()), COLS.sessions), 'text/csv', 'Séances'));
+$('#expJson').addEventListener('click', () => deliver('nback_sauvegarde_' + stamp() + '.json',
+  JSON.stringify({app: 'nback', app_version: APP_VERSION, exported_at: isoLocal(new Date()), sessions: DB.list()}, null, 1), 'application/json', 'Sauvegarde'));
+$('#manualCopy').addEventListener('click', async e => {
+  const ta = $('#manualText'), b = e.currentTarget;
+  try { await navigator.clipboard.writeText(ta.value); b.textContent = 'Copié'; }
+  catch (err) { ta.focus(); ta.select(); b.textContent = 'Texte sélectionné : copiez-le'; }
+});
+$('#manualClose').addEventListener('click', () => { $('#manual').hidden = true; });
+
+/* ---------- start-up ---------- */
+$('#ver').textContent = 'v' + APP_VERSION;
+const dictGroup = (title, rows, prefix) => '<h4>' + title + '</h4>' + rows.map(d => '<dt>' + (prefix || '') + d[0] + '</dt><dd>' + esc(d[1]) + '</dd>').join('');
+$('#dictList').innerHTML = dictGroup('Fichier des essais', DICT.trials)
+  + dictGroup('Fichier des événements', DICT.events)
+  + dictGroup('Fichier des séances : identification', DICT.sessions_head)
+  + dictGroup('Fichier des séances : scores par niveau (N = 0, 1, 2 ou 3)', DICT.levels, 'nN_')
+  + dictGroup('Fichier des séances : réglages et appareil', DICT.sessions_tail);
+renderSettings();
+renderProtocol();
+$('#settingsForm').addEventListener('change', readSettings);
+$('#resetBtn').addEventListener('click', e => arm(e.currentTarget, 'Confirmer le retour aux valeurs par défaut', () => {
+  settings = sanitize(null); store('nback.settings', settings); fillSettings(); renderProtocol();
+}));
+const saved = recall('nback.form');
+if (saved){ $('#f-session').value = saved.session || ''; $('#f-group').value = saved.group || ''; $('#f-exp').value = saved.exp || ''; }
+renderStates();
+renderSessions();
+DB.ready = DB.open().then(() => { renderStates(); renderSessions(); checkDuplicate(); });
+if (!IN_VIEWER && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.ready.then(async () => {
+    try { offlineReady = !!(await caches.match('./index.html') || await caches.match('./')); } catch (e) { offlineReady = false; }
+    renderStates();
+  }).catch(() => {});
+}
+window.__nback = {makeBlock, classify, scoreLevel, qnorm, mulberry32, sanitize, DB};
+})();
+</script>
+</body></html>

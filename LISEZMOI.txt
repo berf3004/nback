@@ -1,0 +1,45 @@
+TÂCHE N-BACK - VERSION HORS LIGNE POUR TABLETTE
+================================================
+
+Contenu du dossier
+  index.html            l'application (tâche, réglages, données, exports)
+  sw.js                 met l'application en cache pour fonctionner sans internet
+  manifest.webmanifest  permet l'ajout à l'écran d'accueil en plein écran
+  icon-192.png, icon-512.png
+  nback_cotation.R      calcule les scores de la littérature à partir du CSV des essais
+
+Installation (même démarche que pour la tâche Flanker)
+  1. Déposer les cinq premiers fichiers, tels quels et dans le même dossier, sur un
+     hébergement HTTPS (GitHub Pages, site web de l'UdeS, etc.). Le mode hors ligne
+     ne fonctionne pas en ouvrant index.html directement depuis l'app Fichiers.
+  2. Sur chaque iPad, avec internet : ouvrir l'adresse dans Safari, puis
+     Partager > Sur l'écran d'accueil.
+  3. Lancer l'application depuis l'icône « n-back ». L'onglet Séance doit afficher
+     « Prête pour le hors-ligne ».
+  4. Activer le mode Avion, fermer puis rouvrir l'application pour vérifier
+     qu'elle se charge et qu'une courte séance s'enregistre.
+  Toujours lancer l'application depuis la même icône : les données sont rangées
+  avec elle sur l'appareil (Safari et l'icône n'ont pas le même stockage).
+
+Mise à jour
+  Remplacer index.html sur l'hébergement et changer la valeur de CACHE dans sw.js
+  (par exemple nback-v1.0.1). Rouvrir l'application deux fois avec internet.
+  Exporter les données avant toute mise à jour.
+
+Sur le terrain
+  - Tablette à l'horizontale, luminosité élevée, mode Ne pas déranger.
+  - Arrêter une séance : maintenir « Arrêter » 1,5 seconde. Les essais faits sont gardés.
+  - Exporter à la fin de chaque journée (onglet Données) : Essais (CSV),
+    Séances et scores (CSV), et la Sauvegarde complète (JSON).
+
+Fichiers exportés
+  nback_essais_*.csv      une ligne par essai : données brutes complètes
+  nback_evenements_*.csv  chaque toucher et chaque changement d'écran, horodatés
+  nback_seances_*.csv     une ligne par séance : réglages, appareil et scores par niveau
+  nback_sauvegarde_*.json tout, pour archivage ou restauration
+  Le dictionnaire complet des variables est dans l'onglet Données de l'application.
+
+Cotation dans R
+  Ouvrir nback_cotation.R, l'exécuter et choisir le fichier nback_essais_*.csv.
+  Le script écrit *_scores.csv à côté (une ligne par séance) et affiche la fidélité
+  entre les blocs 1 et 2 pour chaque niveau.
